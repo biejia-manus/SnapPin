@@ -2,11 +2,13 @@
 
 A lightweight screenshot and pin tool for macOS, inspired by Snipaste.
 
+> **Built entirely by [Manus AI](https://manus.im).** Want to build your own macOS app like this? Try [Manus Desktop](https://manus.im/desktop)!
+
 ## Features
 
 - **F1** — Take a screenshot (freeze screen, drag to select area)
 - **F3** — Pin the screenshot to screen (after selection)
-- **Cmd+C** — Copy screenshot to clipboard (after selection)
+- **Cmd+C / Enter** — Copy screenshot to clipboard and close (after selection)
 - **Esc** — Cancel screenshot or close pinned image
 
 ### Screenshot Editing
@@ -27,6 +29,11 @@ A lightweight screenshot and pin tool for macOS, inspired by Snipaste.
 - **Drag** to move
 - **Cmd+C** to copy to clipboard
 - **Esc** to close
+
+### Settings
+- Customizable hotkeys for screenshot and pin actions
+- Permission status check and quick access to System Settings
+- Accessible from the menu bar icon
 
 ## Installation
 
@@ -51,7 +58,7 @@ SnapPin requires the following macOS permissions:
 - **Screen Recording** — To capture screenshots
 - **Accessibility** — For global hotkeys (optional, improves reliability)
 
-On first launch, an onboarding window will guide you through granting these permissions.
+On first launch, a Settings window will guide you through granting these permissions.
 
 ## Tech Stack
 
@@ -59,6 +66,10 @@ On first launch, an onboarding window will guide you through granting these perm
 - ScreenCaptureKit (screen capture)
 - HotKey (Carbon-based global hotkeys via [soffes/HotKey](https://github.com/soffes/HotKey))
 - Core Graphics (annotation rendering)
+
+## Credits
+
+This project was built entirely by [Manus AI](https://manus.im), an autonomous AI agent. If you'd like to create your own macOS applications with AI assistance, check out [Manus Desktop](https://manus.im/desktop).
 
 ## License
 
