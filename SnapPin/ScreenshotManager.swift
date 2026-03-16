@@ -16,6 +16,10 @@ class ScreenshotManager {
         return isCapturing && overlayWindows.contains(where: { ($0.contentView as? OverlayView)?.hasSelection == true })
     }
     
+    var isInTextEditingMode: Bool {
+        return isCapturing && overlayWindows.contains(where: { ($0.contentView as? OverlayView)?.isInTextEditingMode == true })
+    }
+    
     func startCapture() {
         guard !isCapturing else { return }
         isCapturing = true
