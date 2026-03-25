@@ -12,6 +12,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // HotKey library instances (Carbon RegisterEventHotKey under the hood)
     private var screenshotHotKey: HotKey?
     private var pinHotKey: HotKey?
+    private var recordHotKey: HotKey?
 
     // Local monitor for overlay window key events
     var localKeyMonitor: Any?
@@ -21,6 +22,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         screenshotManager = ScreenshotManager(pinManager: pinManager)
         setupStatusItem()
         NSApp.setActivationPolicy(.accessory)
+        
+        // Pass status button to RecordingManager for red-dot indicator
+        RecordingManager.shared.statusButton = statusItem.button
+        RecordingManager.shared.onRecordingFinished = { [weak self] success, path in
+            if success, let path = path {
+                print("[SnapPin] Recording saved: \(path)")
+            }
+            // Restore status bar icon
+            DispatchQueue.main.async {
+                self?.statusItem.button?.image = NSImage(systemSymbolName: "scissors", accessibilityDescription: "SnapPin")
+                self?.statusItem.button?.contentTintColor = nil
+            }
+        }
         
         // Always register hotkeys immediately on launch
         registerHotkeys()
@@ -35,7 +49,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         settingsController.forceShow()
         
         // Install SIGTERM handler for auto-relaunch after permission changes
-        // macOS sends SIGTERM when "Quit & Reopen" is triggered from permission dialogs
         installTerminationHandler()
         
         print("[SnapPin] App launched, hotkeys registered")
@@ -48,27 +61,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Auto-Relaunch on Permission Change
     
     private func installTerminationHandler() {
-        // Listen for SIGTERM which macOS sends when asking app to quit for permission changes
         let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-        signal(SIGTERM, SIG_IGN) // Ignore default handler so we can handle it
+        signal(SIGTERM, SIG_IGN)
         source.setEventHandler {
-            // Schedule relaunch before terminating
             let bundleURL = Bundle.main.bundleURL
             DispatchQueue.global().async {
-                // Small delay to let the current process finish cleanup
                 Thread.sleep(forTimeInterval: 0.5)
                 let task = Process()
                 task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
                 task.arguments = [bundleURL.path]
                 try? task.run()
             }
-            // Now actually terminate
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 NSApp.terminate(nil)
             }
         }
         source.resume()
-        // Keep a reference to prevent deallocation
         _signalSource = source
     }
     
@@ -86,6 +94,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Screenshot (F1)", action: #selector(takeScreenshot), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Record Screen (F2)", action: #selector(startRecording), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Stop Recording", action: #selector(stopRecording), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Close All Pins", action: #selector(closeAllPins), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
@@ -101,6 +111,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Clear existing hotkeys
         screenshotHotKey = nil
         pinHotKey = nil
+        recordHotKey = nil
 
         let ssConfig = SettingsWindowController.screenshotHotkey()
         screenshotHotKey = HotKey(key: ssConfig.key, modifiers: ssConfig.modifiers)
@@ -116,6 +127,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.screenshotManager.handleF3()
         }
 
+        // Record hotkey (F2 by default) — toggle start/stop
+        let recConfig = SettingsWindowController.recordHotkey()
+        recordHotKey = HotKey(key: recConfig.key, modifiers: recConfig.modifiers)
+        recordHotKey?.keyDownHandler = { [weak self] in
+            print("[SnapPin] Record hotkey pressed")
+            if RecordingManager.shared.state == .recording {
+                self?.stopRecording()
+            } else {
+                self?.startRecording()
+            }
+        }
+
         // Local monitor for overlay window key events (Cmd+C, Enter, Esc)
         if localKeyMonitor == nil {
             localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -126,12 +149,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        print("[SnapPin] Hotkeys registered: Screenshot=\(ssConfig.key), Pin=\(pinConfig.key)")
+        print("[SnapPin] Hotkeys registered: Screenshot=\(ssConfig.key), Pin=\(pinConfig.key), Record=\(recConfig.key)")
     }
 
     func unregisterHotkeys() {
         screenshotHotKey = nil
         pinHotKey = nil
+        recordHotKey = nil
 
         if let m = localKeyMonitor {
             NSEvent.removeMonitor(m)
@@ -154,7 +178,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         // Enter during capture (not in text editing): copy and close
-        if event.keyCode == 36 || event.keyCode == 76 { // Return or Enter (numpad)
+        if event.keyCode == 36 || event.keyCode == 76 {
             if screenshotManager.hasActiveSelection && !screenshotManager.isInTextEditingMode {
                 print("[SnapPin] Enter pressed during capture - copy action")
                 screenshotManager.handleCmdC()
@@ -177,6 +201,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     @objc func takeScreenshot() {
         screenshotManager.startCapture()
+    }
+
+    @objc func startRecording() {
+        // Use the same selection UI as screenshot, but in recording mode
+        screenshotManager.startCaptureForRecording()
+    }
+
+    @objc func stopRecording() {
+        RecordingManager.shared.stopRecording()
     }
     
     @objc func closeAllPins() {

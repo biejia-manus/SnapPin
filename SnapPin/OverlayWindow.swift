@@ -6,6 +6,7 @@ enum ToolbarAction {
     case pin
     case save
     case copy
+    case record
 }
 
 // MARK: - Resize handle positions
@@ -818,7 +819,7 @@ class OverlayView: NSView, NSTextInputClient {
         let dividerW: CGFloat = 12
         
         let toolCount: CGFloat = 4
-        let actionCount: CGFloat = 4
+        let actionCount: CGFloat = 5  // cancel + pin + record + save + copy
         
         let tbW = toolCount * btnW + (toolCount - 1) * spacing
             + dividerW
@@ -895,6 +896,14 @@ class OverlayView: NSView, NSTextInputClient {
             action: #selector(toolbarPin)
         )
         tb.addSubview(pinBtn)
+        xOff += btnW + spacing
+
+        let recBtn = makeToolbarButton(
+            icon: "record.circle", tint: .systemRed,
+            frame: NSRect(x: xOff, y: (tbH - btnH) / 2, width: btnW, height: btnH),
+            action: #selector(toolbarRecord)
+        )
+        tb.addSubview(recBtn)
         xOff += btnW + spacing
 
         let saveBtn = makeToolbarButton(
@@ -1099,6 +1108,11 @@ class OverlayView: NSView, NSTextInputClient {
     @objc private func toolbarPin() {
         commitTextIfNeeded()
         finishWithAction(.pin)
+    }
+
+    @objc private func toolbarRecord() {
+        commitTextIfNeeded()
+        finishWithAction(.record)
     }
     
     @objc private func toolbarSave() {

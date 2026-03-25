@@ -18,11 +18,15 @@ class SettingsWindowController: NSObject {
     static let screenshotModifiersKey = "screenshotModifiers"
     static let pinKeyCodeKey = "pinKeyCode"
     static let pinModifiersKey = "pinModifiers"
+    static let recordKeyCodeKey = "recordKeyCode"
+    static let recordModifiersKey = "recordModifiers"
     // MARK: - Default hotkeys
     static let defaultScreenshotKey: Key = .f1
     static let defaultScreenshotModifiers: NSEvent.ModifierFlags = []
     static let defaultPinKey: Key = .f3
     static let defaultPinModifiers: NSEvent.ModifierFlags = []
+    static let defaultRecordKey: Key = .f2
+    static let defaultRecordModifiers: NSEvent.ModifierFlags = []
     
     // MARK: - Get current hotkey settings
     
@@ -47,12 +51,25 @@ class SettingsWindowController: NSObject {
         }
         return (defaultPinKey, defaultPinModifiers)
     }
+
+    static func recordHotkey() -> (key: Key, modifiers: NSEvent.ModifierFlags) {
+        let defaults = UserDefaults.standard
+        if let rawKey = defaults.object(forKey: recordKeyCodeKey) as? UInt32 {
+            let rawMods = defaults.integer(forKey: recordModifiersKey)
+            if let key = Key(carbonKeyCode: rawKey) {
+                return (key, NSEvent.ModifierFlags(rawValue: UInt(rawMods)))
+            }
+        }
+        return (defaultRecordKey, defaultRecordModifiers)
+    }
     
     // MARK: - Hotkey recording state
     private var isRecordingScreenshot = false
     private var isRecordingPin = false
+    private var isRecordingRecord = false
     private var screenshotHotkeyButton: NSButton?
     private var pinHotkeyButton: NSButton?
+    private var recordHotkeyButton: NSButton?
     private var keyMonitor: Any?
     
     // Permission status indicators
@@ -126,7 +143,7 @@ class SettingsWindowController: NSObject {
         cv.addSubview(hkTitle)
         y -= 32
         
-        // Screenshot hotkey row
+        // Screenshot hotkey row (F1)
         let ssLabel = makeLabel("Screenshot:", font: .systemFont(ofSize: 13), frame: NSRect(x: 40, y: y + 2, width: 100, height: 24))
         cv.addSubview(ssLabel)
         
@@ -149,8 +166,32 @@ class SettingsWindowController: NSObject {
         ssReset.action = #selector(resetScreenshotHotkey)
         cv.addSubview(ssReset)
         y -= 32
-        
-        // Pin hotkey row
+
+        // Record hotkey row (F2)
+        let recLabel = makeLabel("Record:", font: .systemFont(ofSize: 13), frame: NSRect(x: 40, y: y + 2, width: 100, height: 24))
+        cv.addSubview(recLabel)
+
+        let recHotkey = SettingsWindowController.recordHotkey()
+        let recBtn = NSButton(frame: NSRect(x: 150, y: y, width: 180, height: 26))
+        recBtn.title = hotkeyDisplayString(key: recHotkey.key, modifiers: recHotkey.modifiers)
+        recBtn.bezelStyle = .rounded
+        recBtn.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+        recBtn.target = self
+        recBtn.action = #selector(startRecordingRecordHotkey)
+        cv.addSubview(recBtn)
+        recordHotkeyButton = recBtn
+
+        let recReset = NSButton(frame: NSRect(x: 340, y: y, width: 70, height: 26))
+        recReset.title = "Reset"
+        recReset.bezelStyle = .rounded
+        recReset.controlSize = .small
+        recReset.font = .systemFont(ofSize: 11)
+        recReset.target = self
+        recReset.action = #selector(resetRecordHotkey)
+        cv.addSubview(recReset)
+        y -= 32
+
+        // Pin hotkey row (F3)
         let pinLabel = makeLabel("Pin:", font: .systemFont(ofSize: 13), frame: NSRect(x: 40, y: y + 2, width: 100, height: 24))
         cv.addSubview(pinLabel)
         
@@ -173,7 +214,7 @@ class SettingsWindowController: NSObject {
         pinReset.action = #selector(resetPinHotkey)
         cv.addSubview(pinReset)
         y -= 20
-        
+
         let hkHint = makeLabel("Click the button, then press a key (F1–F12 alone, or any key + ⌃/⌥/⇧/⌘).", font: .systemFont(ofSize: 11), frame: NSRect(x: 40, y: y, width: w - 80, height: 14))
         hkHint.textColor = .tertiaryLabelColor
         cv.addSubview(hkHint)
@@ -421,6 +462,13 @@ class SettingsWindowController: NSObject {
         pinHotkeyButton?.title = "Press a key..."
         startKeyMonitor()
     }
+
+    @objc private func startRecordingRecordHotkey() {
+        stopRecording()
+        isRecordingRecord = true
+        recordHotkeyButton?.title = "Press a key..."
+        startKeyMonitor()
+    }
     
     private func startKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -432,6 +480,7 @@ class SettingsWindowController: NSObject {
     private func stopRecording() {
         isRecordingScreenshot = false
         isRecordingPin = false
+        isRecordingRecord = false
         if let m = keyMonitor {
             NSEvent.removeMonitor(m)
             keyMonitor = nil
@@ -473,6 +522,8 @@ class SettingsWindowController: NSObject {
                 screenshotHotkeyButton?.title = "Add ⌃/⌥/⇧/⌘ ..."
             } else if isRecordingPin {
                 pinHotkeyButton?.title = "Add ⌃/⌥/⇧/⌘ ..."
+            } else if isRecordingRecord {
+                recordHotkeyButton?.title = "Add ⌃/⌥/⇧/⌘ ..."
             }
             return
         }
@@ -487,6 +538,10 @@ class SettingsWindowController: NSObject {
             UserDefaults.standard.set(carbonKeyCode, forKey: SettingsWindowController.pinKeyCodeKey)
             UserDefaults.standard.set(Int(flags.rawValue), forKey: SettingsWindowController.pinModifiersKey)
             pinHotkeyButton?.title = displayStr
+        } else if isRecordingRecord {
+            UserDefaults.standard.set(carbonKeyCode, forKey: SettingsWindowController.recordKeyCodeKey)
+            UserDefaults.standard.set(Int(flags.rawValue), forKey: SettingsWindowController.recordModifiersKey)
+            recordHotkeyButton?.title = displayStr
         }
         
         stopRecording()
@@ -504,6 +559,13 @@ class SettingsWindowController: NSObject {
         UserDefaults.standard.removeObject(forKey: SettingsWindowController.pinKeyCodeKey)
         UserDefaults.standard.removeObject(forKey: SettingsWindowController.pinModifiersKey)
         pinHotkeyButton?.title = hotkeyDisplayString(key: SettingsWindowController.defaultPinKey, modifiers: SettingsWindowController.defaultPinModifiers)
+        onHotkeyChanged?()
+    }
+
+    @objc private func resetRecordHotkey() {
+        UserDefaults.standard.removeObject(forKey: SettingsWindowController.recordKeyCodeKey)
+        UserDefaults.standard.removeObject(forKey: SettingsWindowController.recordModifiersKey)
+        recordHotkeyButton?.title = hotkeyDisplayString(key: SettingsWindowController.defaultRecordKey, modifiers: SettingsWindowController.defaultRecordModifiers)
         onHotkeyChanged?()
     }
     

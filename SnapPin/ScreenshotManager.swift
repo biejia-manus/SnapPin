@@ -8,6 +8,7 @@ class ScreenshotManager {
     private var pinManager: PinManager
     private var isCapturing = false
     private var screenImages: [UInt32: CGImage] = [:]
+    private(set) var isRecordingMode = false
     
     init(pinManager: PinManager) {
         self.pinManager = pinManager
@@ -21,9 +22,15 @@ class ScreenshotManager {
         return isCapturing && overlayWindows.contains(where: { ($0.contentView as? OverlayView)?.isInTextEditingMode == true })
     }
     
+    func startCaptureForRecording() {
+        isRecordingMode = true
+        startCapture()
+    }
+
     func startCapture() {
         guard !isCapturing else { return }
         isCapturing = true
+        isRecordingMode = false
         closeOverlays()
         screenImages.removeAll()
         
@@ -186,6 +193,15 @@ class ScreenshotManager {
             let pb = NSPasteboard.general
             pb.clearContents()
             pb.writeObjects([image])
+        case .record:
+            // Start recording the selected region
+            let recordRect = CGRect(
+                x: screen.frame.origin.x + viewRect.origin.x,
+                y: screen.frame.origin.y + viewRect.origin.y,
+                width: viewRect.width,
+                height: viewRect.height
+            )
+            RecordingManager.shared.startRecording(rect: recordRect, on: screen)
         }
     }
     
