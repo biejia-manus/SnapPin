@@ -18,7 +18,6 @@ class SettingsWindowController: NSObject {
     static let screenshotModifiersKey = "screenshotModifiers"
     static let pinKeyCodeKey = "pinKeyCode"
     static let pinModifiersKey = "pinModifiers"
-    
     // MARK: - Default hotkeys
     static let defaultScreenshotKey: Key = .f1
     static let defaultScreenshotModifiers: NSEvent.ModifierFlags = []
@@ -59,7 +58,7 @@ class SettingsWindowController: NSObject {
     // Permission status indicators
     private var screenRecordingStatus: NSTextField?
     private var accessibilityStatus: NSTextField?
-    
+
     // Timer for polling permission status
     private var permissionTimer: Timer?
     
@@ -175,11 +174,11 @@ class SettingsWindowController: NSObject {
         cv.addSubview(pinReset)
         y -= 20
         
-        let hkHint = makeLabel("Click the button, then press a new key combination.", font: .systemFont(ofSize: 11), frame: NSRect(x: 40, y: y, width: w - 80, height: 14))
+        let hkHint = makeLabel("Click the button, then press a key (F1–F12 alone, or any key + ⌃/⌥/⇧/⌘).", font: .systemFont(ofSize: 11), frame: NSRect(x: 40, y: y, width: w - 80, height: 14))
         hkHint.textColor = .tertiaryLabelColor
         cv.addSubview(hkHint)
-        y -= 24
-        
+        y -= 32
+
         // === Permissions Section ===
         let sep2 = NSBox(frame: NSRect(x: 30, y: y, width: w - 60, height: 1))
         sep2.boxType = .separator
@@ -440,14 +439,41 @@ class SettingsWindowController: NSObject {
     }
     
     private func handleRecordedKey(_ event: NSEvent) {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            .subtracting(.function)
-            .subtracting(.numericPad)
+        // Strip .function and .numericPad from modifiers so fn key is not required
+        // Keep only the meaningful modifier flags: control, option, shift, command
+        let flags = event.modifierFlags
+            .intersection([.control, .option, .shift, .command])
         
         // Convert NSEvent keyCode to Carbon keyCode for HotKey library
         let carbonKeyCode = UInt32(event.keyCode)
         guard let key = Key(carbonKeyCode: carbonKeyCode) else {
             stopRecording()
+            return
+        }
+        
+        // Reject bare modifier-only presses (no actual key)
+        // keyCode 54/55 = Cmd, 56/60 = Shift, 58/61 = Option, 59/62 = Ctrl
+        let modifierKeyCodes: Set<UInt32> = [54, 55, 56, 60, 58, 61, 59, 62, 63]
+        if modifierKeyCodes.contains(carbonKeyCode) {
+            // User only pressed a modifier key — keep waiting
+            return
+        }
+        
+        // For non-function keys (letters, numbers, etc.) without any modifier,
+        // require at least one modifier to avoid conflicts with normal typing.
+        // Exception: F1–F12 keys are safe to use alone.
+        let isFunctionKey: Bool = {
+            let fnKeys: Set<Key> = [.f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8, .f9, .f10, .f11, .f12]
+            return fnKeys.contains(key)
+        }()
+        
+        if flags.isEmpty && !isFunctionKey {
+            // Show a warning hint in the button and keep recording
+            if isRecordingScreenshot {
+                screenshotHotkeyButton?.title = "Add ⌃/⌥/⇧/⌘ ..."
+            } else if isRecordingPin {
+                pinHotkeyButton?.title = "Add ⌃/⌥/⇧/⌘ ..."
+            }
             return
         }
         

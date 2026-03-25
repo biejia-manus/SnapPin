@@ -94,6 +94,15 @@ class PinView: NSView {
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
+
+    // Accept first responder so magnify/gesture events are delivered
+    override var acceptsFirstResponder: Bool { true }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // Become first responder to receive gesture events
+        window?.makeFirstResponder(self)
+    }
     
     private func setupTrackingArea() {
         let opts: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeAlways, .inVisibleRect]
@@ -223,14 +232,37 @@ class PinView: NSView {
         }
     }
     
-    // MARK: - Scroll to resize
-    override func scrollWheel(with event: NSEvent) {
+    // MARK: - Trackpad pinch-to-zoom (magnify gesture)
+    override func magnify(with event: NSEvent) {
         guard let win = self.window else { return }
-        let s: CGFloat = event.deltaY > 0 ? 1.05 : 0.95
+        // event.magnification: positive = zoom in, negative = zoom out
+        let s: CGFloat = 1.0 + event.magnification
         let f = win.frame
         let ar = f.width / f.height
         var nw = f.width * s
-        nw = max(50, min(nw, 2000))
+        nw = max(50, min(nw, 4000))
+        let nh = nw / ar
+        // Keep the window centered on its current center point
+        win.setFrame(NSRect(x: f.midX - nw / 2, y: f.midY - nh / 2, width: nw, height: nh), display: true)
+    }
+
+    // MARK: - Scroll wheel / trackpad two-finger scroll → zoom
+    override func scrollWheel(with event: NSEvent) {
+        guard let win = self.window else { return }
+
+        // Both trackpad two-finger scroll and mouse scroll wheel zoom the image.
+        // Use scrollingDeltaY for trackpad (precise), deltaY for mouse wheel.
+        let delta: CGFloat = event.hasPreciseScrollingDeltas
+            ? event.scrollingDeltaY
+            : event.deltaY * 10   // scale mouse wheel ticks to match trackpad feel
+
+        guard delta != 0 else { return }
+        // Positive delta = scroll up = zoom in
+        let s: CGFloat = 1.0 + delta * 0.01
+        let f = win.frame
+        let ar = f.width / f.height
+        var nw = f.width * max(0.5, min(s, 2.0))  // clamp per-event scale
+        nw = max(50, min(nw, 4000))
         let nh = nw / ar
         win.setFrame(NSRect(x: f.midX - nw / 2, y: f.midY - nh / 2, width: nw, height: nh), display: true)
     }

@@ -12,7 +12,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // HotKey library instances (Carbon RegisterEventHotKey under the hood)
     private var screenshotHotKey: HotKey?
     private var pinHotKey: HotKey?
-    
+
     // Local monitor for overlay window key events
     var localKeyMonitor: Any?
     
@@ -95,29 +95,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
     }
     
-    // MARK: - Global Hotkeys using HotKey library (Carbon RegisterEventHotKey)
+    // MARK: - Global Hotkeys
     
     func registerHotkeys() {
         // Clear existing hotkeys
         screenshotHotKey = nil
         pinHotKey = nil
-        
-        // Screenshot hotkey
+
         let ssConfig = SettingsWindowController.screenshotHotkey()
         screenshotHotKey = HotKey(key: ssConfig.key, modifiers: ssConfig.modifiers)
         screenshotHotKey?.keyDownHandler = { [weak self] in
             print("[SnapPin] Screenshot hotkey pressed")
             self?.takeScreenshot()
         }
-        
-        // Pin hotkey
+
         let pinConfig = SettingsWindowController.pinHotkey()
         pinHotKey = HotKey(key: pinConfig.key, modifiers: pinConfig.modifiers)
         pinHotKey?.keyDownHandler = { [weak self] in
             print("[SnapPin] Pin hotkey pressed")
             self?.screenshotManager.handleF3()
         }
-        
+
         // Local monitor for overlay window key events (Cmd+C, Enter, Esc)
         if localKeyMonitor == nil {
             localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -127,14 +125,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return event
             }
         }
-        
+
         print("[SnapPin] Hotkeys registered: Screenshot=\(ssConfig.key), Pin=\(pinConfig.key)")
     }
-    
+
     func unregisterHotkeys() {
         screenshotHotKey = nil
         pinHotKey = nil
-        
+
         if let m = localKeyMonitor {
             NSEvent.removeMonitor(m)
             localKeyMonitor = nil
