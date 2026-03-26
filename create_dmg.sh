@@ -4,38 +4,42 @@ set -e
 APP_NAME="SnapPin"
 VERSION="1.2.0"
 DMG_NAME="${APP_NAME}-${VERSION}.dmg"
-DMG_TEMP="temp_dmg"
-DMG_DIR="/Users/jiahaochen/Downloads"
-APP_PATH="${DMG_DIR}/${APP_NAME}.app"
+
+# Resolve paths relative to this script (repo root)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_PATH="$(dirname "$SCRIPT_DIR")/${APP_NAME}.app"
+DMG_DIR="$(dirname "$SCRIPT_DIR")"
+DMG_TEMP="${DMG_DIR}/.dmg_tmp"
 
 echo "=== Creating DMG for ${APP_NAME} v${VERSION} ==="
+echo "App:  $APP_PATH"
+echo "DMG:  ${DMG_DIR}/${DMG_NAME}"
 
-# Check app exists
+# ── 1. Verify .app exists ─────────────────────────────────────────────────────
 if [ ! -d "$APP_PATH" ]; then
-    echo "Error: ${APP_PATH} not found"
+    echo ""
+    echo "Error: ${APP_PATH} not found."
+    echo "Run build_app.sh first to build the app bundle."
     exit 1
 fi
 
-# Clean up
-rm -rf "${DMG_DIR}/${DMG_TEMP}" "${DMG_DIR}/${DMG_NAME}"
+# ── 2. Prepare temp staging folder ───────────────────────────────────────────
+rm -rf "$DMG_TEMP" "${DMG_DIR}/${DMG_NAME}"
+mkdir -p "$DMG_TEMP"
+cp -R "$APP_PATH" "$DMG_TEMP/"
+ln -s /Applications "${DMG_TEMP}/Applications"
 
-# Create temp directory with app and Applications symlink
-mkdir -p "${DMG_DIR}/${DMG_TEMP}"
-cp -R "$APP_PATH" "${DMG_DIR}/${DMG_TEMP}/"
-ln -s /Applications "${DMG_DIR}/${DMG_TEMP}/Applications"
-
-# Create DMG using hdiutil
-echo "Creating DMG..."
+# ── 3. Create compressed DMG ─────────────────────────────────────────────────
+echo "Packing DMG..."
 hdiutil create \
     -volname "$APP_NAME" \
-    -srcfolder "${DMG_DIR}/${DMG_TEMP}" \
+    -srcfolder "$DMG_TEMP" \
     -ov \
     -format UDZO \
     "${DMG_DIR}/${DMG_NAME}"
 
-# Clean up temp
-rm -rf "${DMG_DIR}/${DMG_TEMP}"
-
+# ── 4. Clean up ───────────────────────────────────────────────────────────────
+rm -rf "$DMG_TEMP"
 
 echo ""
 echo "=== DMG created successfully ==="

@@ -2,25 +2,29 @@
 set -e
 
 APP_NAME="SnapPin"
-BUILD_DIR="/Users/jiahaochen/Downloads/SnapPin"
-APP_DIR="/Users/jiahaochen/Downloads/${APP_NAME}.app"
 
-# Remove old app bundle if exists
-if [ -d "$APP_DIR" ]; then
-    rm -rf "$APP_DIR"
-fi
+# Resolve the directory where this script lives (repo root), regardless of where it is called from
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BUILD_DIR="$SCRIPT_DIR"
+APP_DIR="$(dirname "$SCRIPT_DIR")/${APP_NAME}.app"
 
-# Create app bundle structure
+echo "=== Building ${APP_NAME} ==="
+echo "Repo:    $BUILD_DIR"
+echo "Output:  $APP_DIR"
+
+# ── 1. Compile ────────────────────────────────────────────────────────────────
+cd "$BUILD_DIR"
+swift build 2>&1
+
+# ── 2. Assemble .app bundle ───────────────────────────────────────────────────
+rm -rf "$APP_DIR"
 mkdir -p "${APP_DIR}/Contents/MacOS"
 mkdir -p "${APP_DIR}/Contents/Resources"
 
-# Copy executable
-
-# Copy icon
-cp "/Users/jiahaochen/Downloads/AppIcon.icns" "${APP_DIR}/Contents/Resources/AppIcon.icns"
+cp "${BUILD_DIR}/AppIcon.icns" "${APP_DIR}/Contents/Resources/AppIcon.icns"
 cp "${BUILD_DIR}/.build/debug/${APP_NAME}" "${APP_DIR}/Contents/MacOS/${APP_NAME}"
 
-# Create Info.plist
+# ── 3. Write Info.plist ───────────────────────────────────────────────────────
 cat > "${APP_DIR}/Contents/Info.plist" << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -43,7 +47,7 @@ cat > "${APP_DIR}/Contents/Info.plist" << 'PLIST'
     <key>CFBundleShortVersionString</key>
     <string>1.0</string>
     <key>CFBundleVersion</key>
-    <string>4</string>
+    <string>5</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSUIElement</key>
@@ -54,21 +58,10 @@ cat > "${APP_DIR}/Contents/Info.plist" << 'PLIST'
 </plist>
 PLIST
 
-# Create entitlements file
-cat > "/tmp/SnapPin.entitlements" << 'ENTITLEMENTS'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>com.apple.security.app-sandbox</key>
-    <false/>
-</dict>
-</plist>
-ENTITLEMENTS
+# ── 4. Ad-hoc code sign ───────────────────────────────────────────────────────
+codesign --force --sign - "${APP_DIR}/Contents/MacOS/${APP_NAME}"
+codesign --force --sign - "${APP_DIR}"
 
-# Ad-hoc code sign with entitlements
-codesign --force --sign - --entitlements /tmp/SnapPin.entitlements "${APP_DIR}/Contents/MacOS/${APP_NAME}" 2>&1
-codesign --force --sign - --entitlements /tmp/SnapPin.entitlements "${APP_DIR}" 2>&1
-
-echo "App bundle created and signed at: ${APP_DIR}"
-echo "You can now run it with: open ${APP_DIR}"
+echo ""
+echo "=== Done: ${APP_DIR} ==="
+echo "Run with: open \"${APP_DIR}\""
