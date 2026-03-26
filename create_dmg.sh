@@ -2,7 +2,7 @@
 set -e
 
 APP_NAME="SnapPin"
-VERSION="1.2.0"
+VERSION="1.0.3"
 DMG_NAME="${APP_NAME}-${VERSION}.dmg"
 
 # Resolve paths relative to this script (repo root)
