@@ -7,8 +7,8 @@ DMG_NAME="${APP_NAME}-${VERSION}.dmg"
 
 # Resolve paths relative to this script (repo root)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_PATH="$(dirname "$SCRIPT_DIR")/${APP_NAME}.app"
-DMG_DIR="$(dirname "$SCRIPT_DIR")"
+APP_PATH="${SCRIPT_DIR}/${APP_NAME}.app"
+DMG_DIR="${SCRIPT_DIR}"
 DMG_TEMP="${DMG_DIR}/.dmg_tmp"
 
 echo "=== Creating DMG for ${APP_NAME} v${VERSION} ==="

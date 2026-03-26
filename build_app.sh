@@ -6,7 +6,7 @@ APP_NAME="SnapPin"
 # Resolve the directory where this script lives (repo root), regardless of where it is called from
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="$SCRIPT_DIR"
-APP_DIR="$(dirname "$SCRIPT_DIR")/${APP_NAME}.app"
+APP_DIR="${SCRIPT_DIR}/${APP_NAME}.app"
 
 echo "=== Building ${APP_NAME} ==="
 echo "Repo:    $BUILD_DIR"
