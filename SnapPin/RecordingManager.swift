@@ -63,12 +63,23 @@ class RecordingManager: NSObject {
 
         showBorderWindow(rect: rect, on: screen)
 
+        // Wait a brief moment for the border window to be created on the main thread
+        // before querying SCShareableContent, so we can exclude it from the stream.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self = self else { return }
+            self.startStream(rect: rect, screen: screen)
+        }
+    }
+
+    private func startStream(rect: CGRect, screen: NSScreen) {
         SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { [weak self] content, error in
             guard let self = self else { return }
             guard let content = content else {
+                let msg = "Failed to get screen content: " + (error?.localizedDescription ?? "unknown")
                 DispatchQueue.main.async {
                     self.state = .idle
-                    self.onRecordingFinished?(false, "Failed to get screen content: \(error?.localizedDescription ?? "unknown")")
+                    self.hideBorderWindow()
+                    self.onRecordingFinished?(false, msg)
                 }
                 return
             }
@@ -78,12 +89,22 @@ class RecordingManager: NSObject {
             guard let scDisplay = content.displays.first(where: { $0.displayID == displayID }) else {
                 DispatchQueue.main.async {
                     self.state = .idle
+                    self.hideBorderWindow()
                     self.onRecordingFinished?(false, "Could not find display for recording")
                 }
                 return
             }
 
-            let filter = SCContentFilter(display: scDisplay, excludingWindows: [])
+            // Exclude the border window from the stream so it doesn't appear in the recording
+            var excludedWindows: [SCWindow] = []
+            if let borderWin = self.borderWindow {
+                let borderWindowID = CGWindowID(borderWin.windowNumber)
+                if let scWin = content.windows.first(where: { $0.windowID == borderWindowID }) {
+                    excludedWindows.append(scWin)
+                }
+            }
+
+            let filter = SCContentFilter(display: scDisplay, excludingWindows: excludedWindows)
             let config = SCStreamConfiguration()
 
             // Use full display resolution, we'll crop in the output handler

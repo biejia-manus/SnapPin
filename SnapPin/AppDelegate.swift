@@ -10,9 +10,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var settingsController: SettingsWindowController!
     
     // HotKey library instances (Carbon RegisterEventHotKey under the hood)
-    private var screenshotHotKey: HotKey?
-    private var pinHotKey: HotKey?
-    private var recordHotKey: HotKey?
+    // F1, F2, F3 are all handled here; their behaviour depends on capture state.
+    private var screenshotHotKey: HotKey?   // F1
+    private var recordHotKey: HotKey?       // F2
+    private var ocrHotKey: HotKey?          // F3
 
     // Local monitor for overlay window key events
     var localKeyMonitor: Any?
@@ -93,12 +94,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Screenshot (F1)", action: #selector(takeScreenshot), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Record Screen (F2)", action: #selector(startRecording), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Stop Recording", action: #selector(stopRecording), keyEquivalent: ""))
+
+        // ── Capture ──────────────────────────────────────────────────────────
+        let ssItem = NSMenuItem(title: "Take Screenshot  (F1)", action: #selector(takeScreenshot), keyEquivalent: "")
+        ssItem.toolTip = "F1 — Start screenshot. After drawing a selection:\n  F1 again → Pin\n  F2 → Record screen\n  F3 → Extract text (OCR)\n  Esc → Cancel"
+        menu.addItem(ssItem)
+
         menu.addItem(NSMenuItem.separator())
+
+        // ── Recording ────────────────────────────────────────────────────────
+        let recItem = NSMenuItem(title: "Record Screen  (F2 after screenshot)", action: #selector(startRecording), keyEquivalent: "")
+        recItem.toolTip = "Press F1 first, draw a selection, then press F2 to start recording. Press F2 again to stop."
+        menu.addItem(recItem)
+
+        let stopItem = NSMenuItem(title: "Stop Recording  (F2)", action: #selector(stopRecording), keyEquivalent: "")
+        stopItem.toolTip = "Press F2 to stop the current recording and save."
+        menu.addItem(stopItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // ── Pins ─────────────────────────────────────────────────────────────
         menu.addItem(NSMenuItem(title: "Close All Pins", action: #selector(closeAllPins), keyEquivalent: ""))
+
         menu.addItem(NSMenuItem.separator())
+
+        // ── App ──────────────────────────────────────────────────────────────
         menu.addItem(NSMenuItem(title: "Settings...", action: #selector(showSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "Quit SnapPin", action: #selector(quitApp), keyEquivalent: "q"))
         
@@ -110,33 +130,55 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func registerHotkeys() {
         // Clear existing hotkeys
         screenshotHotKey = nil
-        pinHotKey = nil
         recordHotKey = nil
+        ocrHotKey = nil
 
+        // ── F1: Screenshot / Pin ──────────────────────────────────────────────
+        // • No active selection → start screenshot
+        // • Active selection (not text editing) → Pin
         let ssConfig = SettingsWindowController.screenshotHotkey()
         screenshotHotKey = HotKey(key: ssConfig.key, modifiers: ssConfig.modifiers)
         screenshotHotKey?.keyDownHandler = { [weak self] in
-            print("[SnapPin] Screenshot hotkey pressed")
-            self?.takeScreenshot()
+            guard let self = self else { return }
+            if self.screenshotManager.hasActiveSelection && !self.screenshotManager.isInTextEditingMode {
+                print("[SnapPin] F1 — Pin action")
+                self.screenshotManager.handleF3()
+            } else if !self.screenshotManager.hasActiveSelection {
+                print("[SnapPin] F1 — Start screenshot")
+                self.takeScreenshot()
+            }
         }
 
-        let pinConfig = SettingsWindowController.pinHotkey()
-        pinHotKey = HotKey(key: pinConfig.key, modifiers: pinConfig.modifiers)
-        pinHotKey?.keyDownHandler = { [weak self] in
-            print("[SnapPin] Pin hotkey pressed")
-            self?.screenshotManager.handleF3()
-        }
-
-        // Record hotkey (F2 by default) — toggle start/stop
+        // ── F2: Record (only when there is an active selection) / Stop recording ──
+        // • Recording in progress → stop
+        // • Active selection (not recording) → start recording that region
+        // • No selection, not recording → ignored
         let recConfig = SettingsWindowController.recordHotkey()
         recordHotKey = HotKey(key: recConfig.key, modifiers: recConfig.modifiers)
         recordHotKey?.keyDownHandler = { [weak self] in
-            print("[SnapPin] Record hotkey pressed")
+            guard let self = self else { return }
             if RecordingManager.shared.state == .recording {
-                self?.stopRecording()
-            } else {
-                self?.startRecording()
+                print("[SnapPin] F2 — Stop recording")
+                self.stopRecording()
+            } else if self.screenshotManager.hasActiveSelection && !self.screenshotManager.isInTextEditingMode {
+                print("[SnapPin] F2 — Start recording selected region")
+                self.screenshotManager.handleRecord()
             }
+            // If no selection and not recording: do nothing
+        }
+
+        // ── F3: OCR (only when there is an active selection) ─────────────────
+        // • Active selection (not text editing) → OCR
+        // • Otherwise → ignored
+        let ocrConfig = SettingsWindowController.ocrHotkey()
+        ocrHotKey = HotKey(key: ocrConfig.key, modifiers: ocrConfig.modifiers)
+        ocrHotKey?.keyDownHandler = { [weak self] in
+            guard let self = self else { return }
+            if self.screenshotManager.hasActiveSelection && !self.screenshotManager.isInTextEditingMode {
+                print("[SnapPin] F3 — OCR action")
+                self.screenshotManager.handleOCR()
+            }
+            // If no selection: do nothing
         }
 
         // Local monitor for overlay window key events (Cmd+C, Enter, Esc)
@@ -149,13 +191,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        print("[SnapPin] Hotkeys registered: Screenshot=\(ssConfig.key), Pin=\(pinConfig.key), Record=\(recConfig.key)")
+        print("[SnapPin] Hotkeys registered — F1: Screenshot/Pin, F2: Record/Stop, F3: OCR")
     }
 
     func unregisterHotkeys() {
         screenshotHotKey = nil
-        pinHotKey = nil
         recordHotKey = nil
+        ocrHotKey = nil
 
         if let m = localKeyMonitor {
             NSEvent.removeMonitor(m)
@@ -163,15 +205,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
-    /// Handle key events when our overlay window is active
+    /// Handle key events when our overlay window is active (local monitor)
     @discardableResult
     private func handleLocalKeyEvent(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.function)
-        
+
         // Cmd+C during capture: copy and close
         if flags.contains(.command) && event.charactersIgnoringModifiers == "c" {
             if screenshotManager.hasActiveSelection {
-                print("[SnapPin] Cmd+C pressed during capture - copy action")
+                print("[SnapPin] Cmd+C — copy action")
                 screenshotManager.handleCmdC()
                 return true
             }
@@ -180,7 +222,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Enter during capture (not in text editing): copy and close
         if event.keyCode == 36 || event.keyCode == 76 {
             if screenshotManager.hasActiveSelection && !screenshotManager.isInTextEditingMode {
-                print("[SnapPin] Enter pressed during capture - copy action")
+                print("[SnapPin] Enter — copy action")
                 screenshotManager.handleCmdC()
                 return true
             }
@@ -188,7 +230,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Escape during capture: cancel
         if event.keyCode == 53 {
-            if screenshotManager.hasActiveSelection {
+            if screenshotManager.isCapturing {
                 screenshotManager.cancelCapture()
                 return true
             }
@@ -204,7 +246,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func startRecording() {
-        // Use the same selection UI as screenshot, but in recording mode
+        // Used by menu item only — starts the selection UI in recording mode
         screenshotManager.startCaptureForRecording()
     }
 

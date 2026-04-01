@@ -20,6 +20,8 @@ class SettingsWindowController: NSObject {
     static let pinModifiersKey = "pinModifiers"
     static let recordKeyCodeKey = "recordKeyCode"
     static let recordModifiersKey = "recordModifiers"
+    static let ocrKeyCodeKey = "ocrKeyCode"
+    static let ocrModifiersKey = "ocrModifiers"
     // MARK: - Default hotkeys
     static let defaultScreenshotKey: Key = .f1
     static let defaultScreenshotModifiers: NSEvent.ModifierFlags = []
@@ -27,6 +29,8 @@ class SettingsWindowController: NSObject {
     static let defaultPinModifiers: NSEvent.ModifierFlags = []
     static let defaultRecordKey: Key = .f2
     static let defaultRecordModifiers: NSEvent.ModifierFlags = []
+    static let defaultOCRKey: Key = .f3
+    static let defaultOCRModifiers: NSEvent.ModifierFlags = []
     
     // MARK: - Get current hotkey settings
     
@@ -62,14 +66,27 @@ class SettingsWindowController: NSObject {
         }
         return (defaultRecordKey, defaultRecordModifiers)
     }
+
+    static func ocrHotkey() -> (key: Key, modifiers: NSEvent.ModifierFlags) {
+        let defaults = UserDefaults.standard
+        if let rawKey = defaults.object(forKey: ocrKeyCodeKey) as? UInt32 {
+            let rawMods = defaults.integer(forKey: ocrModifiersKey)
+            if let key = Key(carbonKeyCode: rawKey) {
+                return (key, NSEvent.ModifierFlags(rawValue: UInt(rawMods)))
+            }
+        }
+        return (defaultOCRKey, defaultOCRModifiers)
+    }
     
     // MARK: - Hotkey recording state
     private var isRecordingScreenshot = false
     private var isRecordingPin = false
     private var isRecordingRecord = false
+    private var isRecordingOCR = false
     private var screenshotHotkeyButton: NSButton?
     private var pinHotkeyButton: NSButton?
     private var recordHotkeyButton: NSButton?
+    private var ocrHotkeyButton: NSButton?
     private var keyMonitor: Any?
     
     // Permission status indicators
@@ -127,7 +144,7 @@ class SettingsWindowController: NSObject {
         cv.addSubview(title)
         y -= 24
         
-        let subtitle = makeLabel("Screenshot & Pin Tool for macOS", font: .systemFont(ofSize: 13), frame: NSRect(x: 0, y: y, width: w, height: 18))
+        let subtitle = makeLabel("Screenshot · Pin · Record · OCR for macOS", font: .systemFont(ofSize: 13), frame: NSRect(x: 0, y: y, width: w, height: 18))
         subtitle.alignment = .center
         subtitle.textColor = .secondaryLabelColor
         cv.addSubview(subtitle)
@@ -191,31 +208,31 @@ class SettingsWindowController: NSObject {
         cv.addSubview(recReset)
         y -= 32
 
-        // Pin hotkey row (F3)
-        let pinLabel = makeLabel("Pin:", font: .systemFont(ofSize: 13), frame: NSRect(x: 40, y: y + 2, width: 100, height: 24))
-        cv.addSubview(pinLabel)
-        
-        let pinHotkey = SettingsWindowController.pinHotkey()
-        let pinBtn = NSButton(frame: NSRect(x: 150, y: y, width: 180, height: 26))
-        pinBtn.title = hotkeyDisplayString(key: pinHotkey.key, modifiers: pinHotkey.modifiers)
-        pinBtn.bezelStyle = .rounded
-        pinBtn.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
-        pinBtn.target = self
-        pinBtn.action = #selector(startRecordingPinHotkey)
-        cv.addSubview(pinBtn)
-        pinHotkeyButton = pinBtn
-        
-        let pinReset = NSButton(frame: NSRect(x: 340, y: y, width: 70, height: 26))
-        pinReset.title = "Reset"
-        pinReset.bezelStyle = .rounded
-        pinReset.controlSize = .small
-        pinReset.font = .systemFont(ofSize: 11)
-        pinReset.target = self
-        pinReset.action = #selector(resetPinHotkey)
-        cv.addSubview(pinReset)
+        // OCR hotkey row (F3)
+        let ocrLabel = makeLabel("OCR:", font: .systemFont(ofSize: 13), frame: NSRect(x: 40, y: y + 2, width: 100, height: 24))
+        cv.addSubview(ocrLabel)
+
+        let ocrHotkey = SettingsWindowController.ocrHotkey()
+        let ocrBtn = NSButton(frame: NSRect(x: 150, y: y, width: 180, height: 26))
+        ocrBtn.title = hotkeyDisplayString(key: ocrHotkey.key, modifiers: ocrHotkey.modifiers)
+        ocrBtn.bezelStyle = .rounded
+        ocrBtn.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+        ocrBtn.target = self
+        ocrBtn.action = #selector(startRecordingOCRHotkey)
+        cv.addSubview(ocrBtn)
+        ocrHotkeyButton = ocrBtn
+
+        let ocrReset = NSButton(frame: NSRect(x: 340, y: y, width: 70, height: 26))
+        ocrReset.title = "Reset"
+        ocrReset.bezelStyle = .rounded
+        ocrReset.controlSize = .small
+        ocrReset.font = .systemFont(ofSize: 11)
+        ocrReset.target = self
+        ocrReset.action = #selector(resetOCRHotkey)
+        cv.addSubview(ocrReset)
         y -= 20
 
-        let hkHint = makeLabel("Click the button, then press a key (F1–F12 alone, or any key + ⌃/⌥/⇧/⌘).", font: .systemFont(ofSize: 11), frame: NSRect(x: 40, y: y, width: w - 80, height: 14))
+        let hkHint = makeLabel("F1: Screenshot → F1 Pin  |  F2 Record  |  F3 OCR  |  ⌘C Copy  |  Esc Cancel", font: .systemFont(ofSize: 11), frame: NSRect(x: 40, y: y, width: w - 80, height: 14))
         hkHint.textColor = .tertiaryLabelColor
         cv.addSubview(hkHint)
         y -= 32
@@ -469,6 +486,13 @@ class SettingsWindowController: NSObject {
         recordHotkeyButton?.title = "Press a key..."
         startKeyMonitor()
     }
+
+    @objc private func startRecordingOCRHotkey() {
+        stopRecording()
+        isRecordingOCR = true
+        ocrHotkeyButton?.title = "Press a key..."
+        startKeyMonitor()
+    }
     
     private func startKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -481,6 +505,7 @@ class SettingsWindowController: NSObject {
         isRecordingScreenshot = false
         isRecordingPin = false
         isRecordingRecord = false
+        isRecordingOCR = false
         if let m = keyMonitor {
             NSEvent.removeMonitor(m)
             keyMonitor = nil
@@ -524,6 +549,8 @@ class SettingsWindowController: NSObject {
                 pinHotkeyButton?.title = "Add ⌃/⌥/⇧/⌘ ..."
             } else if isRecordingRecord {
                 recordHotkeyButton?.title = "Add ⌃/⌥/⇧/⌘ ..."
+            } else if isRecordingOCR {
+                ocrHotkeyButton?.title = "Add ⌃/⌥/⇧/⌘ ..."
             }
             return
         }
@@ -542,6 +569,10 @@ class SettingsWindowController: NSObject {
             UserDefaults.standard.set(carbonKeyCode, forKey: SettingsWindowController.recordKeyCodeKey)
             UserDefaults.standard.set(Int(flags.rawValue), forKey: SettingsWindowController.recordModifiersKey)
             recordHotkeyButton?.title = displayStr
+        } else if isRecordingOCR {
+            UserDefaults.standard.set(carbonKeyCode, forKey: SettingsWindowController.ocrKeyCodeKey)
+            UserDefaults.standard.set(Int(flags.rawValue), forKey: SettingsWindowController.ocrModifiersKey)
+            ocrHotkeyButton?.title = displayStr
         }
         
         stopRecording()
@@ -566,6 +597,13 @@ class SettingsWindowController: NSObject {
         UserDefaults.standard.removeObject(forKey: SettingsWindowController.recordKeyCodeKey)
         UserDefaults.standard.removeObject(forKey: SettingsWindowController.recordModifiersKey)
         recordHotkeyButton?.title = hotkeyDisplayString(key: SettingsWindowController.defaultRecordKey, modifiers: SettingsWindowController.defaultRecordModifiers)
+        onHotkeyChanged?()
+    }
+
+    @objc private func resetOCRHotkey() {
+        UserDefaults.standard.removeObject(forKey: SettingsWindowController.ocrKeyCodeKey)
+        UserDefaults.standard.removeObject(forKey: SettingsWindowController.ocrModifiersKey)
+        ocrHotkeyButton?.title = hotkeyDisplayString(key: SettingsWindowController.defaultOCRKey, modifiers: SettingsWindowController.defaultOCRModifiers)
         onHotkeyChanged?()
     }
     

@@ -7,6 +7,7 @@ enum ToolbarAction {
     case save
     case copy
     case record
+    case ocr
 }
 
 // MARK: - Resize handle positions
@@ -170,6 +171,10 @@ class OverlayView: NSView, NSTextInputClient {
     private var rectBtn: NSButton?
     private var textBtn: NSButton?
     private var mosaicBtn: NSButton?
+
+    // Custom in-overlay tooltip (AppKit tooltips can't render above shielding-level windows)
+    private var hoveredTooltipText: String? = nil
+    private var hoveredTooltipOrigin: NSPoint = .zero
     
     // Handle size
     private let handleSize: CGFloat = 8.0
@@ -226,6 +231,18 @@ class OverlayView: NSView, NSTextInputClient {
         guard hasSelection, selectionRect.width > 3, selectionRect.height > 3 else { return }
         commitTextIfNeeded()
         finishWithAction(.copy)
+    }
+
+    func triggerOCR() {
+        guard hasSelection, selectionRect.width > 3, selectionRect.height > 3 else { return }
+        commitTextIfNeeded()
+        finishWithAction(.ocr)
+    }
+
+    func triggerRecord() {
+        guard hasSelection, selectionRect.width > 3, selectionRect.height > 3 else { return }
+        commitTextIfNeeded()
+        finishWithAction(.record)
     }
     
     func undoAnnotation() {
@@ -583,11 +600,55 @@ class OverlayView: NSView, NSTextInputClient {
         if mode == .drawing || mode == .editing || mode == .resizing {
             drawSizeLabel(ctx: ctx)
         }
-        
+
         // Crosshair when drawing
         if mode == .drawing {
             drawCrosshair(ctx: ctx)
         }
+
+        // Custom toolbar tooltip
+        if let tip = hoveredTooltipText {
+            drawToolbarTooltip(tip, at: hoveredTooltipOrigin, ctx: ctx)
+        }
+    }
+
+    private func drawToolbarTooltip(_ text: String, at origin: NSPoint, ctx: CGContext) {
+        let font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.white
+        ]
+        let textSize = (text as NSString).size(withAttributes: attrs)
+        let pad: CGFloat = 6
+        let tipW = textSize.width + pad * 2
+        let tipH = textSize.height + pad * 2
+
+        // Center horizontally on the button, keep within view bounds
+        var tx = origin.x - tipW / 2
+        tx = max(4, min(tx, bounds.width - tipW - 4))
+        let ty = origin.y
+
+        let bgRect = CGRect(x: tx, y: ty, width: tipW, height: tipH)
+
+        // Background: dark charcoal with slight transparency
+        ctx.saveGState()
+        let path = CGPath(roundedRect: bgRect, cornerWidth: 5, cornerHeight: 5, transform: nil)
+        ctx.addPath(path)
+        ctx.setFillColor(NSColor(white: 0.18, alpha: 0.95).cgColor)
+        ctx.fillPath()
+
+        // Subtle border
+        ctx.addPath(path)
+        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.15).cgColor)
+        ctx.setLineWidth(0.5)
+        ctx.strokePath()
+        ctx.restoreGState()
+
+        // Text
+        (text as NSString).draw(
+            at: NSPoint(x: tx + pad, y: ty + pad),
+            withAttributes: attrs
+        )
     }
     
     private func drawAnnotation(_ ann: Annotation, ctx: CGContext, isEditing: Bool) {
@@ -807,94 +868,101 @@ class OverlayView: NSView, NSTextInputClient {
     }
     
     // MARK: - Toolbar
-    // Main toolbar: [Arrow][Rect][Text][Mosaic] | [X][Pin][Copy]
+    // Main toolbar: [Arrow][Rect][Text][Mosaic] | [X][Pin][Rec][Save][Copy][OCR]
+    // Shortcut hints are shown as tooltips on hover.
     // Color sub-bar: [color dots...] — shown below main toolbar when annotation tool is active
-    
+
     private func showToolbar() {
         removeToolbar()
-        
+
         let btnW: CGFloat = 32
         let btnH: CGFloat = 32
         let spacing: CGFloat = 4
         let dividerW: CGFloat = 12
-        
+        let tbH: CGFloat = 40
+
         let toolCount: CGFloat = 4
-        let actionCount: CGFloat = 5  // cancel + pin + record + save + copy
-        
+        let actionCount: CGFloat = 6  // cancel + pin + record + save + copy + ocr
+
         let tbW = toolCount * btnW + (toolCount - 1) * spacing
             + dividerW
             + actionCount * btnW + (actionCount - 1) * spacing
             + 16  // padding
-        let tbH: CGFloat = 40
-        
+
         var tx = selectionRect.maxX - tbW
         var ty = selectionRect.origin.y - tbH - 6
         if ty < 0 { ty = selectionRect.maxY + 6 }
         if tx < 0 { tx = selectionRect.origin.x }
         if tx + tbW > bounds.width { tx = bounds.width - tbW }
-        
+
         let tb = NSView(frame: NSRect(x: tx, y: ty, width: tbW, height: tbH))
         tb.wantsLayer = true
         tb.layer?.backgroundColor = NSColor(white: 0.15, alpha: 0.9).cgColor
         tb.layer?.cornerRadius = 8
-        
+
         var xOff: CGFloat = 8
-        
-        // --- Tool buttons ---
+
+        // --- Annotation tool buttons ---
         let arrBtn = makeToolbarButton(
             icon: "arrow.up.right", tint: .white,
             frame: NSRect(x: xOff, y: (tbH - btnH) / 2, width: btnW, height: btnH),
             action: #selector(toolbarArrow)
         )
+        arrBtn.toolTip = "Arrow annotation"
         tb.addSubview(arrBtn)
         arrowBtn = arrBtn
         xOff += btnW + spacing
-        
+
         let rctBtn = makeToolbarButton(
             icon: "rectangle", tint: .white,
             frame: NSRect(x: xOff, y: (tbH - btnH) / 2, width: btnW, height: btnH),
             action: #selector(toolbarRectangle)
         )
+        rctBtn.toolTip = "Rectangle annotation"
         tb.addSubview(rctBtn)
         rectBtn = rctBtn
         xOff += btnW + spacing
-        
+
         let txtBtn = makeToolbarButton(
             icon: "textformat", tint: .white,
             frame: NSRect(x: xOff, y: (tbH - btnH) / 2, width: btnW, height: btnH),
             action: #selector(toolbarText)
         )
+        txtBtn.toolTip = "Text annotation"
         tb.addSubview(txtBtn)
         textBtn = txtBtn
         xOff += btnW + spacing
-        
+
         let mosBtn = makeToolbarButton(
             icon: "circle.dotted", tint: .white,
             frame: NSRect(x: xOff, y: (tbH - btnH) / 2, width: btnW, height: btnH),
             action: #selector(toolbarMosaic)
         )
+        mosBtn.toolTip = "Mosaic / blur"
         tb.addSubview(mosBtn)
         mosaicBtn = mosBtn
         xOff += btnW + spacing
-        
+
         // --- Divider ---
         addDivider(to: tb, at: xOff, height: tbH)
         xOff += dividerW
-        
+
         // --- Action buttons ---
         let cancelBtn = makeToolbarButton(
             icon: "xmark", tint: .white,
             frame: NSRect(x: xOff, y: (tbH - btnH) / 2, width: btnW, height: btnH),
             action: #selector(toolbarCancel)
         )
+        cancelBtn.toolTip = "Cancel  (Esc)"
         tb.addSubview(cancelBtn)
         xOff += btnW + spacing
-        
+
         let pinBtn = makeToolbarButton(
             icon: "pin.fill", tint: .systemOrange,
             frame: NSRect(x: xOff, y: (tbH - btnH) / 2, width: btnW, height: btnH),
             action: #selector(toolbarPin)
         )
+        pinBtn.toolTip = "Pin to screen  (F1)"
         tb.addSubview(pinBtn)
         xOff += btnW + spacing
 
@@ -903,6 +971,7 @@ class OverlayView: NSView, NSTextInputClient {
             frame: NSRect(x: xOff, y: (tbH - btnH) / 2, width: btnW, height: btnH),
             action: #selector(toolbarRecord)
         )
+        recBtn.toolTip = "Record this region  (F2)"
         tb.addSubview(recBtn)
         xOff += btnW + spacing
 
@@ -911,19 +980,30 @@ class OverlayView: NSView, NSTextInputClient {
             frame: NSRect(x: xOff, y: (tbH - btnH) / 2, width: btnW, height: btnH),
             action: #selector(toolbarSave)
         )
+        saveBtn.toolTip = "Save as image"
         tb.addSubview(saveBtn)
         xOff += btnW + spacing
-        
+
         let copyBtn = makeToolbarButton(
             icon: "checkmark", tint: .systemGreen,
             frame: NSRect(x: xOff, y: (tbH - btnH) / 2, width: btnW, height: btnH),
             action: #selector(toolbarCopy)
         )
+        copyBtn.toolTip = "Copy to clipboard  (⌘C)"
         tb.addSubview(copyBtn)
-        
+        xOff += btnW + spacing
+
+        let ocrBtn = makeToolbarButton(
+            icon: "text.viewfinder", tint: .systemCyan,
+            frame: NSRect(x: xOff, y: (tbH - btnH) / 2, width: btnW, height: btnH),
+            action: #selector(toolbarOCR)
+        )
+        ocrBtn.toolTip = "Extract text (OCR)  (F3)"
+        tb.addSubview(ocrBtn)
+
         addSubview(tb)
         toolbarView = tb
-        
+
         updateToolbarHighlight()
     }
     
@@ -1124,6 +1204,11 @@ class OverlayView: NSView, NSTextInputClient {
         commitTextIfNeeded()
         finishWithAction(.copy)
     }
+
+    @objc private func toolbarOCR() {
+        commitTextIfNeeded()
+        finishWithAction(.ocr)
+    }
     
     private func finishWithAction(_ action: ToolbarAction) {
         screenshotManager?.finishCapture(selectionRect, on: targetScreen, from: self, action: action, annotations: annotations)
@@ -1134,16 +1219,36 @@ class OverlayView: NSView, NSTextInputClient {
     override func mouseMoved(with event: NSEvent) {
         let loc = convert(event.locationInWindow, from: nil)
         mouseLocation = loc
-        
+
+        // Custom tooltip: check if mouse is hovering over a toolbar button
+        let prevTooltip = hoveredTooltipText
+        hoveredTooltipText = nil
+        if let tb = toolbarView, tb.frame.contains(loc) {
+            let locInTb = NSPoint(x: loc.x - tb.frame.origin.x, y: loc.y - tb.frame.origin.y)
+            for sub in tb.subviews {
+                if let btn = sub as? NSButton, btn.frame.contains(locInTb),
+                   let tip = btn.toolTip, !tip.isEmpty {
+                    hoveredTooltipText = tip
+                    // Position tooltip just above the toolbar
+                    hoveredTooltipOrigin = NSPoint(
+                        x: tb.frame.origin.x + btn.frame.midX,
+                        y: tb.frame.origin.y + tb.frame.height + 6
+                    )
+                    break
+                }
+            }
+        }
+        if hoveredTooltipText != prevTooltip { needsDisplay = true }
+
         if mode == .idle {
             needsDisplay = true
             return
         }
-        
+
         if activeAnnotationTool == .mosaic {
             needsDisplay = true
         }
-        
+
         if mode == .editing || mode == .annotating || mode == .textEditing {
             updateCursorForLocation(loc)
         }

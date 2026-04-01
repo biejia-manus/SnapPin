@@ -206,11 +206,19 @@ class PinView: NSView {
         menu.addItem(NSMenuItem(title: "Copy to Clipboard", action: #selector(doCopy), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Save to Desktop", action: #selector(doSave), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Extract Text (OCR)", action: #selector(doOCR), keyEquivalent: ""))
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Close", action: #selector(doClose), keyEquivalent: ""))
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
     
     @objc func doClose() { pinWindow?.closePinWindow() }
+
+    @objc func doOCR() {
+        guard let img = pinWindow?.pinnedImage else { return }
+        let anchorRect = pinWindow?.frame
+        OCRManager.shared.recognizeAndCopy(from: img, anchorRect: anchorRect)
+    }
     
     @objc func doCopy() {
         guard let img = pinWindow?.pinnedImage else { return }

@@ -4,6 +4,23 @@ All notable changes to SnapPin are documented in this file.
 
 ---
 
+## [v1.4.0] — 2026-04-01
+
+### Added
+- **OCR (Extract Text)**: Press **F3** after drawing a selection to recognize text in the captured region using Apple Vision Framework. Works fully offline — no internet or API key required. Supports Simplified Chinese, Traditional Chinese, and English. Recognized text is automatically copied to the clipboard.
+- **OCR result HUD**: A floating card appears briefly after OCR, showing a preview of the recognized text (up to 6 lines) and confirming it has been copied. Redesigned with a light background and dark text for clear readability in any system appearance.
+- **In-overlay tooltips**: Hovering over any button in the screenshot toolbar now shows a tooltip with the button's name and keyboard shortcut, rendered directly inside the overlay (bypassing the macOS system tooltip limitation at shielding window level).
+
+### Changed
+- **Unified F1 shortcut**: F1 now serves dual purpose — press once to start screenshot, press again (with an active selection) to Pin. The separate F3 Pin shortcut has been removed.
+- **F3 reassigned to OCR**: F3 now triggers OCR on the current selection (previously it was the Pin shortcut).
+- **F2 for recording**: F2 starts screen recording when a selection is active; press F2 again to stop and open the save dialog.
+- **Toolbar tooltips**: Removed the shortcut key labels below toolbar icons; replaced with hover tooltips for a cleaner toolbar appearance.
+- **Status bar menu**: Reorganized into logical groups (Capture / Recording / Pins / App) with descriptive tooltips on each item.
+- **Settings**: Removed the separate Pin shortcut row; updated hint text to reflect the new F1/F2/F3 flow.
+
+---
+
 ## [v1.0.3] — 2025-03-26
 
 ### Added

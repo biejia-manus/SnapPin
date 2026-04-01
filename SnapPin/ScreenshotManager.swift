@@ -6,9 +6,10 @@ class ScreenshotManager {
     
     private var overlayWindows: [OverlayWindow] = []
     private var pinManager: PinManager
-    private var isCapturing = false
+    private(set) var isCapturing = false
     private var screenImages: [UInt32: CGImage] = [:]
     private(set) var isRecordingMode = false
+    private(set) var isOCRMode = false
     
     init(pinManager: PinManager) {
         self.pinManager = pinManager
@@ -27,10 +28,16 @@ class ScreenshotManager {
         startCapture()
     }
 
+    func startCaptureForOCR() {
+        isOCRMode = true
+        startCapture()
+    }
+
     func startCapture() {
         guard !isCapturing else { return }
         isCapturing = true
         isRecordingMode = false
+        isOCRMode = false
         closeOverlays()
         screenImages.removeAll()
         
@@ -130,6 +137,28 @@ class ScreenshotManager {
             }
         }
     }
+
+    func handleOCR() {
+        if isCapturing {
+            for overlay in overlayWindows {
+                if let view = overlay.contentView as? OverlayView, view.hasSelection {
+                    view.triggerOCR()
+                    return
+                }
+            }
+        }
+    }
+
+    func handleRecord() {
+        if isCapturing {
+            for overlay in overlayWindows {
+                if let view = overlay.contentView as? OverlayView, view.hasSelection {
+                    view.triggerRecord()
+                    return
+                }
+            }
+        }
+    }
     
     func finishCapture(_ viewRect: NSRect, on screen: NSScreen, from overlayView: OverlayView, action: ToolbarAction, annotations: [Annotation] = []) {
         let displayID = self.displayID(for: screen)
@@ -202,6 +231,10 @@ class ScreenshotManager {
                 height: viewRect.height
             )
             RecordingManager.shared.startRecording(rect: recordRect, on: screen)
+        case .ocr:
+            // Run OCR on the captured image, copy result to clipboard and show HUD
+            let anchorRect = pinManager.lastCapturedRect
+            OCRManager.shared.recognizeAndCopy(from: image, anchorRect: anchorRect)
         }
     }
     
