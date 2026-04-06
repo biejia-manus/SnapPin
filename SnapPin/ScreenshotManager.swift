@@ -6,11 +6,22 @@ class ScreenshotManager {
     
     private var overlayWindows: [OverlayWindow] = []
     private var pinManager: PinManager
-    private(set) var isCapturing = false
+    private(set) var isCapturing = false {
+        didSet {
+            guard isCapturing != oldValue else { return }
+            let capturing = isCapturing
+            DispatchQueue.main.async { [weak self] in
+                self?.onCapturingChanged?(capturing)
+            }
+        }
+    }
     private var screenImages: [UInt32: CGImage] = [:]
     private(set) var isRecordingMode = false
     private(set) var isOCRMode = false
-    
+
+    // Callback invoked on main thread whenever isCapturing changes
+    var onCapturingChanged: ((Bool) -> Void)?
+
     init(pinManager: PinManager) {
         self.pinManager = pinManager
     }

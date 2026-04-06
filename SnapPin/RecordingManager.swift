@@ -17,10 +17,21 @@ class RecordingManager: NSObject {
 
     static let shared = RecordingManager()
 
-    private(set) var state: RecordingState = .idle
+    private(set) var state: RecordingState = .idle {
+        didSet {
+            guard state != oldValue else { return }
+            let newState = state
+            DispatchQueue.main.async { [weak self] in
+                self?.onStateChanged?(newState)
+            }
+        }
+    }
 
     // Callback invoked on main thread when recording stops (success or failure)
     var onRecordingFinished: ((Bool, String?) -> Void)?
+
+    // Callback invoked on main thread whenever recording state changes
+    var onStateChanged: ((RecordingState) -> Void)?
 
     // Status bar button reference for red-dot indicator (set by AppDelegate)
     var statusButton: NSStatusBarButton?

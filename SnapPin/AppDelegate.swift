@@ -39,11 +39,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Always register hotkeys immediately on launch
         registerHotkeys()
-        
+
         // Setup settings controller with hotkey change callback
         settingsController = SettingsWindowController()
         settingsController.onHotkeyChanged = { [weak self] in
             self?.registerHotkeys()
+        }
+
+        // Dynamically register/unregister F2 based on capture and recording state
+        screenshotManager.onCapturingChanged = { [weak self] _ in
+            self?.updateRecordHotkey()
+        }
+        RecordingManager.shared.onStateChanged = { [weak self] _ in
+            self?.updateRecordHotkey()
         }
         
         // Always show settings on app launch
@@ -149,23 +157,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // ── F2: Record (only when there is an active selection) / Stop recording ──
-        // • Recording in progress → stop
-        // • Active selection (not recording) → start recording that region
-        // • No selection, not recording → ignored
-        let recConfig = SettingsWindowController.recordHotkey()
-        recordHotKey = HotKey(key: recConfig.key, modifiers: recConfig.modifiers)
-        recordHotKey?.keyDownHandler = { [weak self] in
-            guard let self = self else { return }
-            if RecordingManager.shared.state == .recording {
-                print("[SnapPin] F2 — Stop recording")
-                self.stopRecording()
-            } else if self.screenshotManager.hasActiveSelection && !self.screenshotManager.isInTextEditingMode {
-                print("[SnapPin] F2 — Start recording selected region")
-                self.screenshotManager.handleRecord()
-            }
-            // If no selection and not recording: do nothing
-        }
+        // ── F2: Record / Stop — registered dynamically via updateRecordHotkey() ──
+        // F2 is NOT registered here at startup; it is registered only when the
+        // user is actively capturing a region or a recording is in progress.
+        // This prevents SnapPin from intercepting F2 in other applications.
+        updateRecordHotkey()
 
         // ── F3: OCR (only when there is an active selection) ─────────────────
         // • Active selection (not text editing) → OCR
@@ -191,7 +187,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        print("[SnapPin] Hotkeys registered — F1: Screenshot/Pin, F2: Record/Stop, F3: OCR")
+        print("[SnapPin] Hotkeys registered — F1: Screenshot/Pin, F3: OCR (F2 registered dynamically)")
+    }
+
+    /// Register F2 only when needed (capturing or recording), unregister otherwise.
+    private func updateRecordHotkey() {
+        let needsF2 = screenshotManager.isCapturing || RecordingManager.shared.state == .recording
+        if needsF2 {
+            if recordHotKey == nil {
+                let recConfig = SettingsWindowController.recordHotkey()
+                recordHotKey = HotKey(key: recConfig.key, modifiers: recConfig.modifiers)
+                recordHotKey?.keyDownHandler = { [weak self] in
+                    guard let self = self else { return }
+                    if RecordingManager.shared.state == .recording {
+                        print("[SnapPin] F2 — Stop recording")
+                        self.stopRecording()
+                    } else if self.screenshotManager.hasActiveSelection && !self.screenshotManager.isInTextEditingMode {
+                        print("[SnapPin] F2 — Start recording selected region")
+                        self.screenshotManager.handleRecord()
+                    }
+                }
+                print("[SnapPin] F2 hotkey registered")
+            }
+        } else {
+            if recordHotKey != nil {
+                recordHotKey = nil
+                print("[SnapPin] F2 hotkey unregistered")
+            }
+        }
     }
 
     func unregisterHotkeys() {

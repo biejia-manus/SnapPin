@@ -4,7 +4,14 @@ All notable changes to SnapPin are documented in this file.
 
 ---
 
-## [v1.4.0] — 2026-04-01
+## [v1.1.1] — 2026-04-06
+
+### Fixed
+- **F2 key no longer intercepted globally**: Previously, SnapPin registered F2 as a system-wide Carbon hotkey at launch, causing it to be captured even when SnapPin was idle — preventing other applications from receiving F2 input. F2 is now registered dynamically: it is activated only when a screenshot selection is active or a recording is in progress, and released immediately afterwards.
+
+---
+
+## [v1.1.0] — 2026-04-01
 
 ### Added
 - **OCR (Extract Text)**: Press **F3** after drawing a selection to recognize text in the captured region using Apple Vision Framework. Works fully offline — no internet or API key required. Supports Simplified Chinese, Traditional Chinese, and English. Recognized text is automatically copied to the clipboard.
