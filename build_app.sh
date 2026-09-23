@@ -1,66 +1,40 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 APP_NAME="SnapPin"
+CONFIGURATION="${CONFIGURATION:-debug}"
+case "$CONFIGURATION" in
+    debug|release) ;;
+    *) echo "Error: CONFIGURATION must be debug or release." >&2; exit 1 ;;
+esac
 
-# Resolve the directory where this script lives (repo root), regardless of where it is called from
+# Resolve paths from the repository, not the caller's current directory.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BUILD_DIR="$SCRIPT_DIR"
 APP_DIR="${SCRIPT_DIR}/${APP_NAME}.app"
+INFO_PLIST="${SCRIPT_DIR}/SnapPin/Info.plist"
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO_PLIST")"
 
-echo "=== Building ${APP_NAME} ==="
-echo "Repo:    $BUILD_DIR"
+echo "=== Building ${APP_NAME} ${VERSION} (${CONFIGURATION}) ==="
+echo "Repo:    $SCRIPT_DIR"
 echo "Output:  $APP_DIR"
 
-# ── 1. Compile ────────────────────────────────────────────────────────────────
-cd "$BUILD_DIR"
-swift build 2>&1
+# 1. Compile and ask SwiftPM for its actual output directory.
+cd "$SCRIPT_DIR"
+swift build --configuration "$CONFIGURATION" 2>&1
+BIN_DIR="$(swift build --configuration "$CONFIGURATION" --show-bin-path)"
 
-# ── 2. Assemble .app bundle ───────────────────────────────────────────────────
+# 2. Assemble the app bundle using a single source of version metadata.
 rm -rf "$APP_DIR"
-mkdir -p "${APP_DIR}/Contents/MacOS"
-mkdir -p "${APP_DIR}/Contents/Resources"
+mkdir -p "${APP_DIR}/Contents/MacOS" "${APP_DIR}/Contents/Resources"
+cp "${SCRIPT_DIR}/AppIcon.icns" "${APP_DIR}/Contents/Resources/AppIcon.icns"
+cp "${BIN_DIR}/${APP_NAME}" "${APP_DIR}/Contents/MacOS/${APP_NAME}"
+cp "$INFO_PLIST" "${APP_DIR}/Contents/Info.plist"
+plutil -lint "${APP_DIR}/Contents/Info.plist"
 
-cp "${BUILD_DIR}/AppIcon.icns" "${APP_DIR}/Contents/Resources/AppIcon.icns"
-cp "${BUILD_DIR}/.build/debug/${APP_NAME}" "${APP_DIR}/Contents/MacOS/${APP_NAME}"
-
-# ── 3. Write Info.plist ───────────────────────────────────────────────────────
-cat > "${APP_DIR}/Contents/Info.plist" << 'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>en</string>
-    <key>CFBundleExecutable</key>
-    <string>SnapPin</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.snappin.app</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>SnapPin</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.1.1</string>
-    <key>CFBundleVersion</key>
-    <string>5</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSScreenCaptureUsageDescription</key>
-    <string>SnapPin needs screen recording permission to capture screenshots.</string>
-</dict>
-</plist>
-PLIST
-
-# ── 4. Ad-hoc code sign ───────────────────────────────────────────────────────
+# 3. Ad-hoc sign. This is not Developer ID signing or Apple notarization.
 codesign --force --sign - "${APP_DIR}/Contents/MacOS/${APP_NAME}"
-codesign --force --sign - "${APP_DIR}"
+codesign --force --sign - "$APP_DIR"
+codesign --verify --deep --strict "$APP_DIR"
 
 echo ""
 echo "=== Done: ${APP_DIR} ==="

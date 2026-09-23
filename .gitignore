@@ -5,3 +5,5 @@
 *.app
 DerivedData/
 .DS_Store
+.work/
+outputs/

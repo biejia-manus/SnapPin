@@ -29,6 +29,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         RecordingManager.shared.onRecordingFinished = { [weak self] success, path in
             if success, let path = path {
                 print("[SnapPin] Recording saved: \(path)")
+            } else if let message = path {
+                print("[SnapPin] Recording failed: \(message)")
+                let alert = NSAlert()
+                alert.messageText = "Recording failed"
+                alert.informativeText = message
+                alert.alertStyle = .warning
+                NSApp.activate(ignoringOtherApps: true)
+                alert.runModal()
             }
             // Restore status bar icon
             DispatchQueue.main.async {
@@ -192,17 +200,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Register F2 only when needed (capturing or recording), unregister otherwise.
     private func updateRecordHotkey() {
-        let needsF2 = screenshotManager.isCapturing || RecordingManager.shared.state == .recording
+        let needsF2 = screenshotManager.isCapturing || RecordingManager.shared.state.isActive
         if needsF2 {
             if recordHotKey == nil {
                 let recConfig = SettingsWindowController.recordHotkey()
                 recordHotKey = HotKey(key: recConfig.key, modifiers: recConfig.modifiers)
                 recordHotKey?.keyDownHandler = { [weak self] in
                     guard let self = self else { return }
-                    if RecordingManager.shared.state == .recording {
+                    if RecordingManager.shared.state.canStop {
                         print("[SnapPin] F2 — Stop recording")
                         self.stopRecording()
-                    } else if self.screenshotManager.hasActiveSelection && !self.screenshotManager.isInTextEditingMode {
+                    } else if RecordingManager.shared.state == .idle,
+                              self.screenshotManager.hasActiveSelection && !self.screenshotManager.isInTextEditingMode {
                         print("[SnapPin] F2 — Start recording selected region")
                         self.screenshotManager.handleRecord()
                     }
@@ -231,6 +240,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Handle key events when our overlay window is active (local monitor)
     @discardableResult
     private func handleLocalKeyEvent(_ event: NSEvent) -> Bool {
+        if screenshotManager.handleColorPickerKeyEvent(event) { return true }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.function)
 
         // Cmd+C during capture: copy and close

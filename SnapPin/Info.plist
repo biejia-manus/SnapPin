@@ -17,18 +17,16 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>1.3.0</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>6</string>
     <key>LSMinimumSystemVersion</key>
-    <string>12.0</string>
+    <string>14.0</string>
     <key>LSUIElement</key>
     <true/>
-    <key>NSMainNibFile</key>
-    <string></string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>NSScreenCaptureUsageDescription</key>
-    <string>SnapPin needs screen recording permission to capture screenshots.</string>
+    <string>SnapPin needs screen recording permission to capture screenshots and record your screen.</string>
 </dict>
 </plist>

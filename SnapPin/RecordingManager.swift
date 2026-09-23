@@ -4,28 +4,22 @@ import ScreenCaptureKit
 import ImageIO
 import UniformTypeIdentifiers
 
-// MARK: - Recording state
-
-enum RecordingState {
-    case idle
-    case recording
-}
-
 // MARK: - RecordingManager
 
 class RecordingManager: NSObject {
 
     static let shared = RecordingManager()
 
-    private(set) var state: RecordingState = .idle {
+    private var lifecycle = RecordingLifecycle() {
         didSet {
-            guard state != oldValue else { return }
+            guard state != oldValue.state else { return }
             let newState = state
             DispatchQueue.main.async { [weak self] in
                 self?.onStateChanged?(newState)
             }
         }
     }
+    var state: RecordingState { lifecycle.state }
 
     // Callback invoked on main thread when recording stops (success or failure)
     var onRecordingFinished: ((Bool, String?) -> Void)?
@@ -39,20 +33,16 @@ class RecordingManager: NSObject {
     // SCStream components
     private var stream: SCStream?
     private var streamOutput: RecordingStreamOutput?
+    private let frameQueue = DispatchQueue(label: "snappin.recording")
+    private let imageContext = CIContext()
+    private var frameSessionID: UUID? // Accessed only on frameQueue.
 
     // Recording region (in screen coordinates, points)
     private var recordingRect: CGRect = .zero
-    private var recordingScreen: NSScreen?
+    private var recordingScreenFrame: CGRect = .zero
 
     // Red border overlay window shown during recording
     private var borderWindow: NSWindow?
-
-    // AVAssetWriter for MP4
-    private var assetWriter: AVAssetWriter?
-    private var videoInput: AVAssetWriterInput?
-    private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
-    private var outputURL: URL?
-    private var outputFormat: RecordingFormat = .mp4
 
     // GIF frame accumulation
     private var gifFrames: [(CGImage, TimeInterval)] = []
@@ -66,84 +56,79 @@ class RecordingManager: NSObject {
     // MARK: - Start recording
 
     func startRecording(rect: CGRect, on screen: NSScreen) {
-        guard state == .idle else { return }
-        recordingRect = rect
-        recordingScreen = screen
-        state = .recording
+        guard let sessionID = lifecycle.begin() else { return }
+        let region = rect.intersection(screen.frame)
+        guard !region.isNull, region.width >= 1, region.height >= 1 else {
+            finishRecording(sessionID, success: false, message: "The recording region is outside the display.")
+            return
+        }
+        recordingRect = region
+        recordingScreenFrame = screen.frame
         updateStatusIndicator()
+        showBorderWindow(rect: region, on: screen)
+        let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 ?? 0
+        let borderID = borderWindow.map { CGWindowID($0.windowNumber) }
+        frameQueue.async {
+            self.frameSessionID = sessionID
+            self.firstSampleReceived = false
+            self.gifFrames.removeAll()
+            self.lastFrameTime = 0
+        }
 
-        showBorderWindow(rect: rect, on: screen)
-
-        // Wait a brief moment for the border window to be created on the main thread
-        // before querying SCShareableContent, so we can exclude it from the stream.
+        // The token check also covers F2 being pressed again during this delay.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            guard let self = self else { return }
-            self.startStream(rect: rect, screen: screen)
+            guard let self = self, self.lifecycle.sessionID == sessionID, self.state == .starting else { return }
+            self.startStream(displayID: displayID, borderID: borderID, sessionID: sessionID)
         }
     }
 
-    private func startStream(rect: CGRect, screen: NSScreen) {
+    private func startStream(displayID: UInt32, borderID: CGWindowID?, sessionID: UUID) {
         SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { [weak self] content, error in
-            guard let self = self else { return }
-            guard let content = content else {
-                let msg = "Failed to get screen content: " + (error?.localizedDescription ?? "unknown")
-                DispatchQueue.main.async {
-                    self.state = .idle
-                    self.hideBorderWindow()
-                    self.onRecordingFinished?(false, msg)
+            DispatchQueue.main.async {
+                guard let self = self, self.lifecycle.sessionID == sessionID, self.state == .starting else { return }
+                guard let content = content else {
+                    self.finishRecording(sessionID, success: false,
+                        message: "Failed to get screen content: " + (error?.localizedDescription ?? "unknown"))
+                    return
                 }
-                return
-            }
-
-            // Find the SCDisplay matching the target screen
-            let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 ?? 0
-            guard let scDisplay = content.displays.first(where: { $0.displayID == displayID }) else {
-                DispatchQueue.main.async {
-                    self.state = .idle
-                    self.hideBorderWindow()
-                    self.onRecordingFinished?(false, "Could not find display for recording")
+                guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
+                    self.finishRecording(sessionID, success: false, message: "Could not find display for recording")
+                    return
                 }
-                return
-            }
+                let excludedWindows = content.windows.filter { $0.windowID == borderID }
+                let filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
+                let config = SCStreamConfiguration()
+                config.width = display.width * 2
+                config.height = display.height * 2
+                config.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+                config.showsCursor = true
+                config.captureResolution = .best
+                config.pixelFormat = kCVPixelFormatType_32BGRA
 
-            // Exclude the border window from the stream so it doesn't appear in the recording
-            var excludedWindows: [SCWindow] = []
-            if let borderWin = self.borderWindow {
-                let borderWindowID = CGWindowID(borderWin.windowNumber)
-                if let scWin = content.windows.first(where: { $0.windowID == borderWindowID }) {
-                    excludedWindows.append(scWin)
-                }
-            }
-
-            let filter = SCContentFilter(display: scDisplay, excludingWindows: excludedWindows)
-            let config = SCStreamConfiguration()
-
-            // Use full display resolution, we'll crop in the output handler
-            config.width = scDisplay.width * 2
-            config.height = scDisplay.height * 2
-            config.minimumFrameInterval = CMTime(value: 1, timescale: 30) // 30fps
-            config.showsCursor = true
-            config.captureResolution = .best
-            config.pixelFormat = kCVPixelFormatType_32BGRA
-
-            let output = RecordingStreamOutput()
-            output.manager = self
-            self.streamOutput = output
-            self.firstSampleReceived = false
-            self.gifFrames = []
-            self.lastFrameTime = 0
-
-            let stream = SCStream(filter: filter, configuration: config, delegate: nil)
-            do {
-                try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: DispatchQueue(label: "snappin.recording"))
-                try stream.startCapture()
+                let output = RecordingStreamOutput(sessionID: sessionID)
+                output.manager = self
+                let stream = SCStream(filter: filter, configuration: config, delegate: output)
+                self.streamOutput = output
                 self.stream = stream
-                print("[SnapPin] Recording started for rect: \(rect)")
-            } catch {
-                DispatchQueue.main.async {
-                    self.state = .idle
-                    self.updateStatusIndicator()
-                    self.onRecordingFinished?(false, "Failed to start stream: \(error.localizedDescription)")
+                do {
+                    try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: self.frameQueue)
+                    stream.startCapture { [weak self] error in
+                        DispatchQueue.main.async {
+                            guard let self = self, self.lifecycle.sessionID == sessionID else { return }
+                            if let error = error {
+                                self.finishRecording(sessionID, success: false,
+                                    message: "Failed to start recording: \(error.localizedDescription)")
+                            } else if self.state == .stopping {
+                                // F2 arrived while startCapture was still in flight.
+                                self.stopStream(stream, sessionID: sessionID)
+                            } else if self.lifecycle.didStart(sessionID) {
+                                print("[SnapPin] Recording started for rect: \(self.recordingRect)")
+                            }
+                        }
+                    }
+                } catch {
+                    self.finishRecording(sessionID, success: false,
+                        message: "Failed to configure recording: \(error.localizedDescription)")
                 }
             }
         }
@@ -152,24 +137,67 @@ class RecordingManager: NSObject {
     // MARK: - Stop recording
 
     func stopRecording() {
-        guard state == .recording else { return }
-        state = .idle
-        updateStatusIndicator()
-
+        let previousState = state
+        guard let sessionID = lifecycle.requestStop() else { return }
         hideBorderWindow()
+        updateStatusIndicator()
+        guard let stream = stream else {
+            finishRecording(sessionID, success: false, message: nil)
+            return
+        }
+        if previousState == .recording { stopStream(stream, sessionID: sessionID) }
+        // During startup, its completion handler will stop the stream once ready.
+    }
 
-        stream?.stopCapture { [weak self] error in
+    private func stopStream(_ stream: SCStream, sessionID: UUID) {
+        stream.stopCapture { [weak self] error in
             guard let self = self else { return }
-            if let error = error {
-                print("[SnapPin] Stream stop error: \(error)")
-            }
-            self.stream = nil
-            self.streamOutput = nil
-
-            DispatchQueue.main.async {
-                self.promptSavePanel()
+            // Drain queued frames before accessing them on the main thread.
+            self.frameQueue.async {
+                if self.frameSessionID == sessionID { self.frameSessionID = nil }
+                DispatchQueue.main.async {
+                    guard self.lifecycle.sessionID == sessionID else { return }
+                    self.stream = nil
+                    self.streamOutput = nil
+                    if let error = error {
+                        self.finishRecording(sessionID, success: false,
+                            message: "Failed to stop recording: \(error.localizedDescription)")
+                    } else if self.gifFrames.isEmpty {
+                        self.finishRecording(sessionID, success: false, message: "No frames captured. Please try recording again.")
+                    } else {
+                        self.promptSavePanel()
+                    }
+                }
             }
         }
+    }
+
+    func streamFailed(sessionID: UUID, error: Error) {
+        DispatchQueue.main.async { [weak self] in
+            self?.finishRecording(sessionID, success: false, message: "Recording interrupted: \(error.localizedDescription)")
+        }
+    }
+
+    private func finishRecording(_ sessionID: UUID, success: Bool, message: String?) {
+        guard lifecycle.sessionID == sessionID else { return }
+        stream = nil
+        streamOutput = nil
+        hideBorderWindow()
+        // Keep the session busy until all its frame callbacks have drained.
+        frameQueue.async {
+            if self.frameSessionID == sessionID { self.frameSessionID = nil }
+            self.gifFrames.removeAll()
+            DispatchQueue.main.async {
+                guard self.lifecycle.finish(sessionID) else { return }
+                self.updateStatusIndicator()
+                self.onRecordingFinished?(success, message)
+            }
+        }
+    }
+
+    private func finishExport(success: Bool, message: String?) {
+        guard let sessionID = lifecycle.sessionID else { return }
+        finishRecording(sessionID, success: success, message: message)
     }
 
     // MARK: - Red border window
@@ -230,92 +258,32 @@ class RecordingManager: NSObject {
 
     // MARK: - Frame handling (called from RecordingStreamOutput)
 
-    func handleFrame(_ sampleBuffer: CMSampleBuffer) {
-        guard state == .recording else { return }
+    func handleFrame(_ sampleBuffer: CMSampleBuffer, sessionID: UUID) {
+        guard frameSessionID == sessionID else { return }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-
+        guard pts.isNumeric else { return }
+        let elapsed = firstSampleReceived ? CMTimeGetSeconds(CMTimeSubtract(pts, startTime)) : 0
+        guard gifFrames.isEmpty || elapsed - lastFrameTime >= 1.0 / gifFPS else { return }
+        guard let croppedBuffer = RecordingFrameCropper.crop(pixelBuffer, to: recordingRect,
+                                                             on: recordingScreenFrame) else { return }
         if !firstSampleReceived {
             firstSampleReceived = true
             startTime = pts
         }
 
-        // Crop the pixel buffer to the recording rect
-        guard let croppedBuffer = cropPixelBuffer(pixelBuffer, to: recordingRect, screen: recordingScreen) else { return }
-
-        // Accumulate for GIF (at reduced frame rate)
-        let elapsed = CMTimeGetSeconds(CMTimeSubtract(pts, startTime))
-        if elapsed - lastFrameTime >= 1.0 / gifFPS || gifFrames.isEmpty {
-            let ciImage = CIImage(cvPixelBuffer: croppedBuffer)
-            let context = CIContext()
-            if let cgImage = context.createCGImage(ciImage, from: ciImage.extent) {
-                gifFrames.append((cgImage, elapsed))
-                lastFrameTime = elapsed
-            }
+        let ciImage = CIImage(cvPixelBuffer: croppedBuffer)
+        if let cgImage = imageContext.createCGImage(ciImage, from: ciImage.extent) {
+            gifFrames.append((cgImage, elapsed))
+            lastFrameTime = elapsed
         }
-
-        // Write to MP4 asset writer
-        if let writer = assetWriter, let input = videoInput, let adaptor = pixelBufferAdaptor {
-            if writer.status == .unknown {
-                writer.startWriting()
-                writer.startSession(atSourceTime: .zero)
-            }
-            if writer.status == .writing && input.isReadyForMoreMediaData {
-                let relPTS = CMTimeSubtract(pts, startTime)
-                adaptor.append(croppedBuffer, withPresentationTime: relPTS)
-            }
-        }
-    }
-
-    // MARK: - Crop pixel buffer to recording rect
-
-    private func cropPixelBuffer(_ buffer: CVPixelBuffer, to rect: CGRect, screen: NSScreen?) -> CVPixelBuffer? {
-        guard let screen = screen else { return nil }
-
-        let scale = CGFloat(CVPixelBufferGetWidth(buffer)) / screen.frame.width
-        let cropX = rect.origin.x * scale
-        // In CoreVideo, Y=0 is top; in AppKit, Y=0 is bottom — flip Y
-        let cropY = (screen.frame.height - rect.maxY) * scale
-        let cropW = rect.width * scale
-        let cropH = rect.height * scale
-
-        let cropRect = CGRect(x: cropX, y: cropY, width: cropW, height: cropH)
-
-        CVPixelBufferLockBaseAddress(buffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
-
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
-        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else { return nil }
-
-        let bytesPerPixel = 4
-        let offsetX = Int(cropRect.origin.x) * bytesPerPixel
-        let offsetY = Int(cropRect.origin.y) * Int(bytesPerRow)
-        let croppedBase = baseAddress.advanced(by: offsetY + offsetX)
-
-        var croppedBuffer: CVPixelBuffer?
-        let attrs: [String: Any] = [
-            kCVPixelBufferCGImageCompatibilityKey as String: true,
-            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
-        ]
-        let status = CVPixelBufferCreateWithBytes(
-            kCFAllocatorDefault,
-            Int(cropW),
-            Int(cropH),
-            kCVPixelFormatType_32BGRA,
-            croppedBase,
-            bytesPerRow,
-            nil, nil,
-            attrs as CFDictionary,
-            &croppedBuffer
-        )
-        guard status == kCVReturnSuccess else { return nil }
-        return croppedBuffer
     }
 
     // MARK: - Save panel
 
     private func promptSavePanel() {
+        NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Save Recording"
         alert.informativeText = "Choose the format to save your recording."
@@ -331,7 +299,7 @@ class RecordingManager: NSObject {
         case .alertSecondButtonReturn:
             saveAs(.gif)
         default:
-            onRecordingFinished?(false, nil)
+            finishExport(success: false, message: nil)
         }
     }
 
@@ -349,7 +317,7 @@ class RecordingManager: NSObject {
         panel.canCreateDirectories = true
 
         guard panel.runModal() == .OK, let url = panel.url else {
-            onRecordingFinished?(false, nil)
+            finishExport(success: false, message: nil)
             return
         }
 
@@ -365,7 +333,7 @@ class RecordingManager: NSObject {
 
     private func encodeMp4(to url: URL) {
         guard !gifFrames.isEmpty else {
-            onRecordingFinished?(false, "No frames captured")
+            finishExport(success: false, message: "No frames captured")
             return
         }
 
@@ -378,7 +346,7 @@ class RecordingManager: NSObject {
         try? FileManager.default.removeItem(at: url)
 
         guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mp4) else {
-            onRecordingFinished?(false, "Failed to create AVAssetWriter")
+            finishExport(success: false, message: "Failed to create AVAssetWriter")
             return
         }
 
@@ -420,9 +388,9 @@ class RecordingManager: NSObject {
         writer.finishWriting { [weak self] in
             DispatchQueue.main.async {
                 if writer.status == .completed {
-                    self?.onRecordingFinished?(true, url.path)
+                    self?.finishExport(success: true, message: url.path)
                 } else {
-                    self?.onRecordingFinished?(false, writer.error?.localizedDescription)
+                    self?.finishExport(success: false, message: writer.error?.localizedDescription ?? "Failed to save MP4")
                 }
             }
         }
@@ -456,7 +424,7 @@ class RecordingManager: NSObject {
 
     private func encodeGif(to url: URL) {
         guard !gifFrames.isEmpty else {
-            onRecordingFinished?(false, "No frames captured")
+            finishExport(success: false, message: "No frames captured")
             return
         }
 
@@ -467,7 +435,7 @@ class RecordingManager: NSObject {
         ]
 
         guard let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.gif.identifier as CFString, gifFrames.count, nil) else {
-            onRecordingFinished?(false, "Failed to create GIF destination")
+            finishExport(success: false, message: "Failed to create GIF destination")
             return
         }
 
@@ -486,9 +454,9 @@ class RecordingManager: NSObject {
         }
 
         if CGImageDestinationFinalize(dest) {
-            onRecordingFinished?(true, url.path)
+            finishExport(success: true, message: url.path)
         } else {
-            onRecordingFinished?(false, "Failed to finalize GIF")
+            finishExport(success: false, message: "Failed to finalize GIF")
         }
     }
 
@@ -497,7 +465,7 @@ class RecordingManager: NSObject {
     private func updateStatusIndicator() {
         DispatchQueue.main.async { [weak self] in
             guard let self = self, let btn = self.statusButton else { return }
-            if self.state == .recording {
+            if self.state.canStop {
                 // Red dot overlay on the status bar icon
                 btn.image = NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: "Recording")
                 btn.contentTintColor = .systemRed
@@ -518,13 +486,24 @@ enum RecordingFormat {
 
 // MARK: - SCStreamOutput delegate
 
-class RecordingStreamOutput: NSObject, SCStreamOutput {
+class RecordingStreamOutput: NSObject, SCStreamOutput, SCStreamDelegate {
     weak var manager: RecordingManager?
+    private let sessionID: UUID
+
+    init(sessionID: UUID) { self.sessionID = sessionID }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .screen else { return }
-        guard CMSampleBufferDataIsReady(sampleBuffer) else { return }
-        manager?.handleFrame(sampleBuffer)
+        guard sampleBuffer.isValid, CMSampleBufferDataIsReady(sampleBuffer),
+              let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
+                as? [[SCStreamFrameInfo: Any]],
+              let status = attachments.first?[.status] as? Int,
+              status == SCFrameStatus.complete.rawValue else { return }
+        autoreleasepool { manager?.handleFrame(sampleBuffer, sessionID: sessionID) }
+    }
+
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        manager?.streamFailed(sessionID: sessionID, error: error)
     }
 }
 

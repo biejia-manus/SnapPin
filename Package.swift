@@ -21,6 +21,11 @@ let package = Package(
                 .linkedFramework("CoreGraphics"),
                 .linkedFramework("ScreenCaptureKit")
             ]
+        ),
+        .testTarget(
+            name: "SnapPinTests",
+            dependencies: ["SnapPin"],
+            path: "Tests/SnapPinTests"
         )
     ]
 )

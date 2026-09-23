@@ -4,6 +4,24 @@ All notable changes to SnapPin are documented in this file.
 
 ---
 
+## [v1.3.0] — 2026-09-23
+
+### Added
+- **Screen color picker**: An eyedropper in the screenshot toolbar previews the original screen pixel in sRGB and displays HEX and RGBA values. Click to lock; copy either format from the result panel or use Cmd+C / Shift+Cmd+C.
+- **Retina and multi-display sampling**: Sample anywhere on captured displays without including the dimming overlay or annotations. Esc leaves the color tool without discarding the screenshot selection.
+- **Regression tests**: 30 automated tests cover color conversion, picker interactions, recording crop coordinates, buffer ownership, and recording lifecycle transitions.
+
+### Fixed
+- **External-display recording bounds**: Convert global selection coordinates to display-local pixels and clamp the crop to valid frame bounds.
+- **Recording crash**: Copy cropped BGRA pixels into owned memory instead of retaining a dangling pointer into a captured frame.
+- **Rapid F2 start/stop**: Guard asynchronous startup and stale callbacks, prevent overlapping sessions, and drain frame processing before saving.
+- **Recording errors**: Handle stream startup/interruption failures, remove the recording border, and display the error instead of failing silently.
+
+### Changed
+- **Consistent packaging metadata**: App and DMG versions now derive from the source Info.plist. The app builder supports optimized release builds via `CONFIGURATION=release`.
+
+---
+
 ## [v1.1.1] — 2026-04-06
 
 ### Fixed

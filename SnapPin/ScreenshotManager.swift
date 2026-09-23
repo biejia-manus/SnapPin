@@ -18,6 +18,9 @@ class ScreenshotManager {
     private var screenImages: [UInt32: CGImage] = [:]
     private(set) var isRecordingMode = false
     private(set) var isOCRMode = false
+    private weak var colorPickerOwner: OverlayView?
+    private(set) var isPickingColor = false
+    private(set) var pickedColor: ScreenColor?
 
     // Callback invoked on main thread whenever isCapturing changes
     var onCapturingChanged: ((Bool) -> Void)?
@@ -34,6 +37,73 @@ class ScreenshotManager {
         return isCapturing && overlayWindows.contains(where: { ($0.contentView as? OverlayView)?.isInTextEditingMode == true })
     }
     
+    // MARK: - Screen color picker
+
+    func beginColorPicking(from owner: OverlayView) {
+        endColorPicking()
+        colorPickerOwner = owner
+        pickedColor = nil
+        isPickingColor = true
+        owner.showColorPickerResult()
+        for window in overlayWindows {
+            (window.contentView as? OverlayView)?.setColorPicking(true)
+        }
+    }
+
+    func updatePickedColor(_ color: ScreenColor?) {
+        guard isPickingColor else { return }
+        pickedColor = color
+        colorPickerOwner?.updateColorPickerResult(color, isPicking: true)
+    }
+
+    func lockPickedColor() {
+        guard isPickingColor, let color = pickedColor else { return }
+        isPickingColor = false
+        for window in overlayWindows {
+            (window.contentView as? OverlayView)?.setColorPicking(false)
+        }
+        colorPickerOwner?.updateColorPickerResult(color, isPicking: false)
+        // A click on a different monitor may have changed the key window.
+        colorPickerOwner?.window?.makeKeyAndOrderFront(nil)
+    }
+
+    func endColorPicking() {
+        isPickingColor = false
+        pickedColor = nil
+        for window in overlayWindows {
+            (window.contentView as? OverlayView)?.setColorPicking(false)
+        }
+        colorPickerOwner?.removeColorPickerResult()
+        colorPickerOwner = nil
+    }
+
+    func copyPickedColor(_ format: ScreenColorFormat, to pasteboard: NSPasteboard = .general) {
+        guard let color = pickedColor else { return }
+        lockPickedColor()
+        pasteboard.clearContents()
+        pasteboard.setString(format.string(for: color), forType: .string)
+        colorPickerOwner?.showColorCopied(format)
+    }
+
+    /// Consume picker shortcuts before the existing screenshot copy/cancel handlers.
+    func handleColorPickerKeyEvent(_ event: NSEvent) -> Bool {
+        guard colorPickerOwner != nil else { return false }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if event.keyCode == 53 {
+            endColorPicking()
+            return true
+        }
+        if flags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "c" {
+            copyPickedColor(flags.contains(.shift) ? .rgba : .hex)
+            return true
+        }
+        if event.keyCode == 36 || event.keyCode == 76 {
+            lockPickedColor()
+            return true
+        }
+        return false
+    }
+
     func startCaptureForRecording() {
         isRecordingMode = true
         startCapture()
@@ -430,6 +500,7 @@ class ScreenshotManager {
     }
     
     private func closeOverlays() {
+        endColorPicking()
         let windows = overlayWindows
         overlayWindows.removeAll()
         for w in windows {

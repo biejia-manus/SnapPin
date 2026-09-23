@@ -72,6 +72,7 @@ class OverlayWindow: NSWindow {
             super.keyDown(with: event)
             return
         }
+        if screenshotManager?.handleColorPickerKeyEvent(event) == true { return }
         
         // If in text editing mode, route through input context for IME support
         if view.isInTextEditingMode {
@@ -143,6 +144,9 @@ class OverlayView: NSView, NSTextInputClient {
     // Toolbar
     private var toolbarView: NSView?
     private var colorBarView: NSView?  // Sub-toolbar for color selection
+    private var colorPickerResultView: ColorPickerResultView?
+    private var isPickingColor = false
+    private var previewColor: ScreenColor?
     
     // Annotation state
     private var activeAnnotationTool: AnnotationTool = .none
@@ -171,6 +175,7 @@ class OverlayView: NSView, NSTextInputClient {
     private var rectBtn: NSButton?
     private var textBtn: NSButton?
     private var mosaicBtn: NSButton?
+    private var colorPickerBtn: NSButton?
 
     // Custom in-overlay tooltip (AppKit tooltips can't render above shielding-level windows)
     private var hoveredTooltipText: String? = nil
@@ -202,7 +207,7 @@ class OverlayView: NSView, NSTextInputClient {
     }
     
     private func setupTrackingArea() {
-        let opts: NSTrackingArea.Options = [.mouseMoved, .activeAlways, .inVisibleRect]
+        let opts: NSTrackingArea.Options = [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect]
         trackingArea = NSTrackingArea(rect: bounds, options: opts, owner: self, userInfo: nil)
         addTrackingArea(trackingArea!)
     }
@@ -262,6 +267,7 @@ class OverlayView: NSView, NSTextInputClient {
     }
     
     func nudgeSelection(dx: CGFloat, dy: CGFloat) {
+        guard !isPickingColor else { return }
         var newX = selectionRect.origin.x + dx
         var newY = selectionRect.origin.y + dy
         newX = max(0, min(newX, bounds.width - selectionRect.width))
@@ -271,6 +277,119 @@ class OverlayView: NSView, NSTextInputClient {
         needsDisplay = true
     }
     
+    // MARK: - Screen color picker
+
+    func setColorPicking(_ enabled: Bool) {
+        isPickingColor = enabled
+        previewColor = nil
+        hoveredTooltipText = nil
+        if enabled {
+            if mode == .textEditing { commitTextIfNeeded() }
+            activeAnnotationTool = .none
+            currentAnnotation = nil
+            if hasSelection { mode = .editing }
+        }
+        updateToolbarHighlight()
+        window?.invalidateCursorRects(for: self)
+        if let window = window {
+            let loc = convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
+            if bounds.contains(loc) { updateCursorForLocation(loc) }
+        }
+        needsDisplay = true
+    }
+
+    func showColorPickerResult() {
+        let panel = ColorPickerResultView()
+        panel.onCopy = { [weak self] format in
+            self?.screenshotManager?.copyPickedColor(format)
+        }
+        colorPickerResultView = panel
+        addSubview(panel)
+        repositionColorPickerResult()
+        updateToolbarHighlight()
+    }
+
+    func updateColorPickerResult(_ color: ScreenColor?, isPicking: Bool) {
+        colorPickerResultView?.update(color: color, isPicking: isPicking)
+    }
+
+    func showColorCopied(_ format: ScreenColorFormat) {
+        colorPickerResultView?.showCopied(format)
+    }
+
+    func removeColorPickerResult() {
+        colorPickerResultView?.removeFromSuperview()
+        colorPickerResultView = nil
+        updateToolbarHighlight()
+        needsDisplay = true
+    }
+
+    private func repositionColorPickerResult() {
+        guard let panel = colorPickerResultView, let toolbar = toolbarView else { return }
+        let x = max(4, min(toolbar.frame.maxX - panel.frame.width, bounds.maxX - panel.frame.width - 4))
+        var y = toolbar.frame.minY - panel.frame.height - 6
+        if y < bounds.minY + 4 { y = toolbar.frame.maxY + 6 }
+        y = max(4, min(y, bounds.maxY - panel.frame.height - 4))
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    private func isOverControls(_ point: NSPoint) -> Bool {
+        [toolbarView, colorBarView, colorPickerResultView].compactMap { $0 }
+            .contains { $0.frame.contains(point) }
+    }
+
+    private func updateColorPickerPreview(at point: NSPoint) {
+        mouseLocation = point
+        previewColor = nil
+        // Retain the last sample when entering controls, so Copy never picks a
+        // pixel underneath the result panel instead of the user's chosen color.
+        if !isOverControls(point) {
+            if let image = backgroundImage {
+                previewColor = ScreenColorSampler.sample(at: point, in: bounds, image: image)
+            }
+            screenshotManager?.updatePickedColor(previewColor)
+        }
+        updateCursorForLocation(point)
+        needsDisplay = true
+    }
+
+    private func drawColorPickerPreview(ctx: CGContext) {
+        guard isPickingColor, let color = previewColor else { return }
+        let width: CGFloat = 242
+        let height: CGFloat = 60
+        var x = mouseLocation.x + 18
+        if x + width > bounds.maxX - 4 { x = mouseLocation.x - width - 18 }
+        x = max(4, min(x, bounds.maxX - width - 4))
+        let y = max(4, min(mouseLocation.y - height - 18, bounds.maxY - height - 4))
+        let rect = NSRect(x: x, y: y, width: width, height: height)
+        ctx.saveGState()
+        ctx.setFillColor(NSColor(white: 0.12, alpha: 0.97).cgColor)
+        ctx.addPath(CGPath(roundedRect: rect, cornerWidth: 7, cornerHeight: 7, transform: nil))
+        ctx.fillPath()
+        let swatch = NSRect(x: x + 10, y: y + 14, width: 28, height: 32)
+        ctx.setFillColor(color.nsColor.cgColor)
+        ctx.fill(swatch)
+        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.7).cgColor)
+        ctx.setLineWidth(1)
+        ctx.stroke(swatch)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.white
+        ]
+        (color.hex as NSString).draw(at: NSPoint(x: x + 48, y: y + 34), withAttributes: attributes)
+        (color.rgba as NSString).draw(at: NSPoint(x: x + 48, y: y + 13), withAttributes: attributes)
+        ctx.restoreGState()
+    }
+
+    @objc private func toolbarColorPicker() {
+        if isPickingColor, colorPickerResultView != nil {
+            screenshotManager?.endColorPicking()
+        } else {
+            commitTextIfNeeded()
+            screenshotManager?.beginColorPicking(from: self)
+        }
+    }
+
     // MARK: - Text Editing via NSTextInputClient
     
     /// Called from OverlayWindow.keyDown when in text editing mode
@@ -532,6 +651,7 @@ class OverlayView: NSView, NSTextInputClient {
             ctx.setFillColor(NSColor.black.withAlphaComponent(0.3).cgColor)
             ctx.fill(bounds)
             drawCrosshair(ctx: ctx)
+            drawColorPickerPreview(ctx: ctx)
             return
         }
         
@@ -610,6 +730,7 @@ class OverlayView: NSView, NSTextInputClient {
         if let tip = hoveredTooltipText {
             drawToolbarTooltip(tip, at: hoveredTooltipOrigin, ctx: ctx)
         }
+        drawColorPickerPreview(ctx: ctx)
     }
 
     private func drawToolbarTooltip(_ text: String, at origin: NSPoint, ctx: CGContext) {
@@ -868,7 +989,7 @@ class OverlayView: NSView, NSTextInputClient {
     }
     
     // MARK: - Toolbar
-    // Main toolbar: [Arrow][Rect][Text][Mosaic] | [X][Pin][Rec][Save][Copy][OCR]
+    // Main toolbar: [Arrow][Rect][Text][Mosaic][Eyedropper] | [X][Pin][Rec][Save][Copy][OCR]
     // Shortcut hints are shown as tooltips on hover.
     // Color sub-bar: [color dots...] — shown below main toolbar when annotation tool is active
 
@@ -881,7 +1002,7 @@ class OverlayView: NSView, NSTextInputClient {
         let dividerW: CGFloat = 12
         let tbH: CGFloat = 40
 
-        let toolCount: CGFloat = 4
+        let toolCount: CGFloat = 5
         let actionCount: CGFloat = 6  // cancel + pin + record + save + copy + ocr
 
         let tbW = toolCount * btnW + (toolCount - 1) * spacing
@@ -941,6 +1062,17 @@ class OverlayView: NSView, NSTextInputClient {
         mosBtn.toolTip = "Mosaic / blur"
         tb.addSubview(mosBtn)
         mosaicBtn = mosBtn
+        xOff += btnW + spacing
+
+        let pickerBtn = makeToolbarButton(
+            icon: "eyedropper", tint: .white,
+            frame: NSRect(x: xOff, y: (tbH - btnH) / 2, width: btnW, height: btnH),
+            action: #selector(toolbarColorPicker)
+        )
+        pickerBtn.toolTip = "Screen color picker · HEX / RGBA"
+        pickerBtn.setAccessibilityLabel("Screen color picker")
+        tb.addSubview(pickerBtn)
+        colorPickerBtn = pickerBtn
         xOff += btnW + spacing
 
         // --- Divider ---
@@ -1005,6 +1137,7 @@ class OverlayView: NSView, NSTextInputClient {
         toolbarView = tb
 
         updateToolbarHighlight()
+        repositionToolbar()
     }
     
     private func showColorBar() {
@@ -1100,6 +1233,8 @@ class OverlayView: NSView, NSTextInputClient {
             ? NSColor.white.withAlphaComponent(0.2).cgColor : NSColor.clear.cgColor
         mosaicBtn?.layer?.backgroundColor = activeAnnotationTool == .mosaic
             ? NSColor.white.withAlphaComponent(0.2).cgColor : NSColor.clear.cgColor
+        colorPickerBtn?.layer?.backgroundColor = colorPickerResultView != nil
+            ? NSColor.white.withAlphaComponent(0.2).cgColor : NSColor.clear.cgColor
         
         // Show/hide color bar based on whether annotation tool is active
         if activeAnnotationTool != .none && activeAnnotationTool != .mosaic {
@@ -1126,6 +1261,7 @@ class OverlayView: NSView, NSTextInputClient {
     }
     
     private func removeToolbar() {
+        if colorPickerResultView != nil { screenshotManager?.endColorPicking() }
         removeColorBar()
         toolbarView?.removeFromSuperview()
         toolbarView = nil
@@ -1133,6 +1269,7 @@ class OverlayView: NSView, NSTextInputClient {
         rectBtn = nil
         textBtn = nil
         mosaicBtn = nil
+        colorPickerBtn = nil
     }
     
     private func repositionToolbar() {
@@ -1146,7 +1283,9 @@ class OverlayView: NSView, NSTextInputClient {
         if tx < 0 { tx = selectionRect.origin.x }
         if tx + tbW > bounds.width { tx = bounds.width - tbW }
         
-        tb.frame.origin = NSPoint(x: tx, y: ty)
+        // Keep the toolbar reachable for selections touching a display edge.
+        tb.frame.origin = NSPoint(x: max(0, tx), y: max(0, min(ty, bounds.height - tbH)))
+        repositionColorPickerResult()
         
         // Reposition color bar if visible
         if let bar = colorBarView {
@@ -1161,6 +1300,7 @@ class OverlayView: NSView, NSTextInputClient {
     // MARK: - Toolbar Actions
     
     private func selectAnnotationTool(_ tool: AnnotationTool) {
+        screenshotManager?.endColorPicking()
         if mode == .textEditing {
             commitTextIfNeeded()
         }
@@ -1216,9 +1356,25 @@ class OverlayView: NSView, NSTextInputClient {
     
     // MARK: - Mouse Events
     
+    override func mouseEntered(with event: NSEvent) {
+        if isPickingColor {
+            updateColorPickerPreview(at: convert(event.locationInWindow, from: nil))
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        previewColor = nil
+        hoveredTooltipText = nil
+        needsDisplay = true
+    }
+
     override func mouseMoved(with event: NSEvent) {
         let loc = convert(event.locationInWindow, from: nil)
         mouseLocation = loc
+        if isPickingColor {
+            updateColorPickerPreview(at: loc)
+            return
+        }
 
         // Custom tooltip: check if mouse is hovering over a toolbar button
         let prevTooltip = hoveredTooltipText
@@ -1255,6 +1411,14 @@ class OverlayView: NSView, NSTextInputClient {
     }
     
     private func updateCursorForLocation(_ loc: NSPoint) {
+        if isOverControls(loc) {
+            NSCursor.arrow.set()
+            return
+        }
+        if isPickingColor {
+            NSCursor.crosshair.set()
+            return
+        }
         if activeAnnotationTool != .none && selectionRect.contains(loc) {
             if activeAnnotationTool == .text {
                 NSCursor.iBeam.set()
@@ -1281,9 +1445,13 @@ class OverlayView: NSView, NSTextInputClient {
     override func mouseDown(with event: NSEvent) {
         let loc = convert(event.locationInWindow, from: nil)
         
-        // Check if click is in toolbar or color bar area
-        if let tb = toolbarView, tb.frame.contains(loc) { return }
-        if let cb = colorBarView, cb.frame.contains(loc) { return }
+        // Picking works anywhere on any captured display, not just the selection.
+        if isOverControls(loc) { return }
+        if isPickingColor {
+            updateColorPickerPreview(at: loc)
+            screenshotManager?.lockPickedColor()
+            return
+        }
         
         // If in text editing mode: click anywhere = commit text and go back to editing
         if mode == .textEditing {
@@ -1374,6 +1542,10 @@ class OverlayView: NSView, NSTextInputClient {
     override func mouseDragged(with event: NSEvent) {
         let loc = convert(event.locationInWindow, from: nil)
         mouseLocation = loc
+        if isPickingColor {
+            updateColorPickerPreview(at: loc)
+            return
+        }
         
         switch mode {
         case .drawing:
@@ -1528,8 +1700,11 @@ class OverlayView: NSView, NSTextInputClient {
     }
     
     override func resetCursorRects() {
-        if mode == .idle {
+        if mode == .idle || isPickingColor {
             addCursorRect(bounds, cursor: .crosshair)
+            for control in [toolbarView, colorBarView, colorPickerResultView].compactMap({ $0 }) {
+                addCursorRect(control.frame, cursor: .arrow)
+            }
         }
     }
 }
