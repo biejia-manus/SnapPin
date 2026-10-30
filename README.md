@@ -54,7 +54,7 @@ Colors are read from the original frozen screenshot, not from the dimming overla
 ### Download
 Download a `.dmg` or `.zip` from [GitHub Releases](https://github.com/biejia-manus/SnapPin/releases). Quit any running copy of SnapPin, then open the DMG (or extract the ZIP) and move `SnapPin.app` to your Applications folder.
 
-The v1.3.0 prebuilt packages target **Apple Silicon (arm64), macOS 14+**. They are ad-hoc signed, not Apple-notarized. macOS may show a security warning; only approve the app if you trust this repository. SHA-256 checksums are provided with the release. Intel Mac users can build from source; no Intel prebuilt package is included in this release.
+The v1.3.1 prebuilt packages target **Apple Silicon (arm64), macOS 14+**. They are ad-hoc signed, not Apple-notarized. macOS may show a security warning; only approve the app if you trust this repository. SHA-256 checksums are provided with the release. Intel Mac users can build from source; no Intel prebuilt package is included in this release.
 
 ### Build from Source
 Requires Swift 5.9+ and macOS 14+.
@@ -69,7 +69,7 @@ open SnapPin.app
 
 For an optimized app and a versioned DMG, run `CONFIGURATION=release bash build_app.sh`, then `bash create_dmg.sh`. Both scripts read the application version from `SnapPin/Info.plist` (the DMG script reads the bundled copy).
 
-Run the color picker and recording regression tests with `swift test` (tests require Swift 6+ for Swift Testing). If a Command Line Tools-only installation cannot locate the Testing macro plugin, use:
+Run the color picker, selection overlay, and recording regression tests with `swift test` (tests require Swift 6+ for Swift Testing). If a Command Line Tools-only installation cannot locate the Testing macro plugin, use:
 
 ```bash
 swift test --disable-xctest --enable-swift-testing \

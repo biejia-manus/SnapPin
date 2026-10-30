@@ -648,7 +648,7 @@ class OverlayView: NSView, NSTextInputClient {
         
         if mode == .idle {
             // Dim entire screen and show crosshair
-            ctx.setFillColor(NSColor.black.withAlphaComponent(0.3).cgColor)
+            ctx.setFillColor(SelectionOverlayStyle.dimColor.cgColor)
             ctx.fill(bounds)
             drawCrosshair(ctx: ctx)
             drawColorPickerPreview(ctx: ctx)
@@ -656,7 +656,7 @@ class OverlayView: NSView, NSTextInputClient {
         }
         
         // Dim outside selection
-        ctx.setFillColor(NSColor.black.withAlphaComponent(0.3).cgColor)
+        ctx.setFillColor(SelectionOverlayStyle.dimColor.cgColor)
         
         // Top
         ctx.fill(NSRect(x: 0, y: selectionRect.maxY, width: bounds.width, height: bounds.height - selectionRect.maxY))
@@ -667,10 +667,7 @@ class OverlayView: NSView, NSTextInputClient {
         // Right
         ctx.fill(NSRect(x: selectionRect.maxX, y: selectionRect.minY, width: bounds.width - selectionRect.maxX, height: selectionRect.height))
         
-        // Selection border
-        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.8).cgColor)
-        ctx.setLineWidth(1.0)
-        ctx.stroke(selectionRect)
+        drawSelectionBorder(ctx: ctx)
         
         // Draw completed annotations (clipped to selection)
         ctx.saveGState()
@@ -695,10 +692,10 @@ class OverlayView: NSView, NSTextInputClient {
         // Draw handles in editing mode
         if mode == .editing || mode == .annotating || mode == .textEditing {
             for (_, rect) in handleRects() {
-                ctx.setFillColor(NSColor.white.cgColor)
+                ctx.setFillColor(SelectionOverlayStyle.handleFillColor.cgColor)
                 ctx.fill(rect)
-                ctx.setStrokeColor(NSColor.gray.cgColor)
-                ctx.setLineWidth(0.5)
+                ctx.setStrokeColor(SelectionOverlayStyle.handleStrokeColor.cgColor)
+                ctx.setLineWidth(SelectionOverlayStyle.handleStrokeWidth)
                 ctx.stroke(rect)
             }
         }
@@ -731,6 +728,19 @@ class OverlayView: NSView, NSTextInputClient {
             drawToolbarTooltip(tip, at: hoveredTooltipOrigin, ctx: ctx)
         }
         drawColorPickerPreview(ctx: ctx)
+    }
+
+    /// Draws the selection edge: a dark halo plus an accent line, both outside the selection.
+    /// The two layers keep the edge visible on white apps and on dark apps.
+    private func drawSelectionBorder(ctx: CGContext) {
+        ctx.saveGState()
+        ctx.setStrokeColor(SelectionOverlayStyle.borderHaloColor.cgColor)
+        ctx.setLineWidth(SelectionOverlayStyle.borderHaloWidth)
+        ctx.stroke(SelectionOverlayStyle.haloStrokeRect(for: selectionRect))
+        ctx.setStrokeColor(SelectionOverlayStyle.borderColor.cgColor)
+        ctx.setLineWidth(SelectionOverlayStyle.borderWidth)
+        ctx.stroke(SelectionOverlayStyle.borderStrokeRect(for: selectionRect))
+        ctx.restoreGState()
     }
 
     private func drawToolbarTooltip(_ text: String, at origin: NSPoint, ctx: CGContext) {
@@ -949,19 +959,24 @@ class OverlayView: NSView, NSTextInputClient {
     }
     
     private func drawCrosshair(ctx: CGContext) {
-        ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.5).cgColor)
-        ctx.setLineWidth(0.5)
-        ctx.setLineDash(phase: 0, lengths: [5, 5])
-        
-        ctx.move(to: CGPoint(x: 0, y: mouseLocation.y))
-        ctx.addLine(to: CGPoint(x: bounds.width, y: mouseLocation.y))
-        ctx.strokePath()
-        
-        ctx.move(to: CGPoint(x: mouseLocation.x, y: 0))
-        ctx.addLine(to: CGPoint(x: mouseLocation.x, y: bounds.height))
-        ctx.strokePath()
-        
-        ctx.setLineDash(phase: 0, lengths: [])
+        ctx.saveGState()
+        ctx.setLineWidth(SelectionOverlayStyle.crosshairLineWidth)
+        let dash = SelectionOverlayStyle.crosshairDashLength
+        // Two passes with complementary dashes: dark segments fill the gaps of light segments.
+        let passes: [(NSColor, CGFloat)] = [
+            (SelectionOverlayStyle.crosshairDarkColor, 0),
+            (SelectionOverlayStyle.crosshairLightColor, dash),
+        ]
+        for (color, phase) in passes {
+            ctx.setStrokeColor(color.cgColor)
+            ctx.setLineDash(phase: phase, lengths: [dash, dash])
+            ctx.move(to: CGPoint(x: 0, y: mouseLocation.y))
+            ctx.addLine(to: CGPoint(x: bounds.width, y: mouseLocation.y))
+            ctx.move(to: CGPoint(x: mouseLocation.x, y: 0))
+            ctx.addLine(to: CGPoint(x: mouseLocation.x, y: bounds.height))
+            ctx.strokePath()
+        }
+        ctx.restoreGState()
     }
     
     private func drawSizeLabel(ctx: CGContext) {

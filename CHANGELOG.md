@@ -4,6 +4,14 @@ All notable changes to SnapPin are documented in this file.
 
 ---
 
+## [v1.3.1] — 2026-10-30
+
+### Changed
+- **Selection contrast on white apps**: The F1 dim layer is darker (black 30% → 50%), so dimmed white content is clearly gray instead of almost white. The selection border is now a 2 pt blue line with a thin dark outline, drawn fully outside the selection so it never covers captured pixels. Resize handles are blue with a white outline, and the crosshair uses alternating dark and light dashes. The edge stays visible on both white and dark apps.
+- **Regression tests**: 5 new tests render the overlay over a white screen and check dim contrast, border color, and crosshair visibility. The suite now has 35 tests.
+
+---
+
 ## [v1.3.0] — 2026-09-23
 
 ### Added
